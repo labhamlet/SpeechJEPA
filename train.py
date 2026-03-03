@@ -42,7 +42,6 @@ torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
 torch.backends.cudnn.benchmark = False
 
 
-torch.backends.cuda.cufft_plan_cache[0].max_size = 0
 class ComponentFactory:
     """Factory class for creating model components with proper error handling."""
     

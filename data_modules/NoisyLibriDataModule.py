@@ -17,6 +17,20 @@ import torchaudio
 from .managers import RIRManager, NoiseManager
 
 class NoisySSLDataModule(pl.LightningDataModule):
+    BUCKET_BOUNDARIES = [32000,
+                        48000, 
+                        64000, 
+                        80000,
+                        96000, 
+                        112000,
+                        128000, 
+                        144000,
+                        160000, 
+                        176000,
+                        192000, 
+                        208000,
+                        224000, 
+                        250000]
     def __init__(
         self,
         masker,
@@ -53,6 +67,14 @@ class NoisySSLDataModule(pl.LightningDataModule):
         self.noise_loader = NoiseManager(noise_path).start()
         self.rir_loader = RIRManager(rir_path).start()
 
+
+    @classmethod
+    def get_bucket_length(cls, length: int) -> int:
+        for b in cls.BUCKET_BOUNDARIES:
+            if length <= b:
+                return b
+        return cls.BUCKET_BOUNDARIES[-1]
+    
     def _build_resampler(self, sr: int, resample_sr: int) -> torchaudio.transforms.Resample:
         return torchaudio.transforms.Resample(
             sr,
@@ -135,6 +157,7 @@ class NoisySSLDataModule(pl.LightningDataModule):
         batch_size = len(batch)
         lengths = [item["signal"].shape[-1] for item in batch]
         max_len = max(lengths)
+        max_len = NoisySSLDataModule.get_bucket_length(max_len)
 
         padded_audio = torch.zeros(batch_size, max_len)
         padding_mask = torch.zeros(batch_size, max_len, dtype=torch.bool)

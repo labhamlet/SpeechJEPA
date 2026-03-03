@@ -113,7 +113,7 @@ class SSLDataModule(pl.LightningDataModule):
         # Access using dictionary keys
         lengths = [item["signal"].shape[-1] for item in batch]
         max_len = max(lengths)
-        # max_len = SSLDataModule.get_bucket_length(max_len)
+        max_len = SSLDataModule.get_bucket_length(max_len)
         padded_audio = torch.zeros(batch_size, max_len)
         padding_mask = torch.zeros(batch_size, max_len, dtype=torch.bool)
 
