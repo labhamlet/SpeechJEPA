@@ -1,20 +1,21 @@
 def get_identity_from_cfg(cfg):
-    identity = "Data={}_".format(
+    identity = "Data={}_EMA={}_EMAEnd={}_EMASteps={}_".format(
         cfg.data.get("name", None),
+        cfg.trainer.get("ema_decay"),
+        cfg.trainer.get("ema_end_decay"),
+        cfg.trainer.get("ema_anneal_end_step")
     )
-    identity += "Extractor={}_".format(
-        cfg.extractor.name,
-    )
-    identity += "BatchSize={}_NrGPUs={}_LR={}_".format(
-        cfg.trainer.get("batch_size"),
+    identity += "MaxBatchSize={}_NrGPUs={}_LR={}_LRWarmup={}_".format(
+        cfg.data.get("max_batch_size"),
         cfg.trainer.get("num_gpus"),
         cfg.optimizer.get("lr"),
+        cfg.trainer.get("warmup_steps")
     )
     identity += "TargetProb={}_TargetLen={}_MinContextBlock={}_ContextRatio={}".format(
-        cfg.masker.get("target_prob", 0.25),
-        cfg.masker.get("target_length", 10),
-        cfg.masker.get("min_context_len", 1),
-        cfg.masker.get("ratio_cutoff", 0.1),
+        cfg.masker.get("target_prob"),
+        cfg.masker.get("target_length"),
+        cfg.masker.get("min_context_len"),
+        cfg.masker.get("ratio_cutoff"),
     )
     return identity
 

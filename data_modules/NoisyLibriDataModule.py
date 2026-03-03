@@ -17,20 +17,20 @@ import torchaudio
 from .managers import RIRManager, NoiseManager
 
 class NoisySSLDataModule(pl.LightningDataModule):
-    BUCKET_BOUNDARIES = [32000,
-                        48000, 
-                        64000, 
-                        80000,
-                        96000, 
-                        112000,
-                        128000, 
-                        144000,
-                        160000, 
-                        176000,
-                        192000, 
-                        208000,
-                        224000, 
-                        250000]
+    BUCKET_BOUNDARIES = [32000 * 2,
+                        48000 * 2, 
+                        64000 * 2, 
+                        80000 * 2,
+                        96000 * 2, 
+                        112000 * 2,
+                        128000 * 2, 
+                        144000 * 2,
+                        160000 * 2, 
+                        176000 * 2,
+                        192000 * 2, 
+                        208000 * 2,
+                        224000 * 2, 
+                        250000 * 2]
     def __init__(
         self,
         masker,
@@ -39,17 +39,17 @@ class NoisySSLDataModule(pl.LightningDataModule):
         noise_path : str, 
         min_sample_len: int = 32000,
         max_sample_len: int = 250000,
-        target_batch_size: int = 1_400_000,
-        max_batch_size : int = 1_500_000,
+        target_batch_size: int = 12_000_000,
+        max_batch_size : int = 12_000_000,
         data_sr : int = 16000,
         noise_and_rir_sr : int = 32000,
-        snr_low : float = -5.0, 
-        snr_high: float = 20.0,
-        max_tokens: int = 1_500_000,
+        snr_low : float = 5, 
+        snr_high: float = 40.0,
         loudness_normalize: bool = True,
         conv_kernel: list =[10, 3, 3, 3, 3, 2, 2],
         conv_stride: list =[5, 2, 2, 2, 2, 2, 2],
         target_masks_per_context: int = 4,
+        bucket_limits : bool = False,
         pin_memory: bool = True,
         num_workers : int = 16
     ):
@@ -66,6 +66,9 @@ class NoisySSLDataModule(pl.LightningDataModule):
         self.resampler = self._build_resampler(data_sr, noise_and_rir_sr)
         self.noise_loader = NoiseManager(noise_path).start()
         self.rir_loader = RIRManager(rir_path).start()
+        self.bucket_limits = bucket_limits 
+        if self.bucket_limits:
+            print("Bucket limits are turned on")
 
 
     @classmethod
@@ -150,14 +153,16 @@ class NoisySSLDataModule(pl.LightningDataModule):
         return noise, noise_start_idx, noise_length
 
     @staticmethod
-    def custom_collate_fn(batch, token_func, target_masks_per_ctx, downsampling_rate):
+    def custom_collate_fn(batch, token_func, target_masks_per_ctx, downsampling_rate, bucket_limits):
         """
         Groups dictionary samples into a single batch with padding.
         """
         batch_size = len(batch)
         lengths = [item["signal"].shape[-1] for item in batch]
         max_len = max(lengths)
-        max_len = NoisySSLDataModule.get_bucket_length(max_len)
+        if bucket_limits:
+            
+            max_len = NoisySSLDataModule.get_bucket_length(max_len)
 
         padded_audio = torch.zeros(batch_size, max_len)
         padding_mask = torch.zeros(batch_size, max_len, dtype=torch.bool)
@@ -215,7 +220,8 @@ class NoisySSLDataModule(pl.LightningDataModule):
             self.custom_collate_fn, 
             token_func=self.token_func, 
             target_masks_per_ctx=self.hparams.target_masks_per_context,
-            downsampling_rate = self.resampling_factor
+            downsampling_rate = self.resampling_factor,
+            bucket_limits = self.bucket_limits
         )
 
         dataset = (

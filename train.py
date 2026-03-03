@@ -103,6 +103,9 @@ class ComponentFactory:
                 transformer_decoder_cfg = TransformerEncoderCFG.create(), 
                 transformer_decoder_layers_cfg = TransformerLayerCFG.create(d_model = 384),
                 lr=cfg.optimizer.lr,
+                ema_decay=cfg.trainer.ema_decay,
+                ema_end_decay=cfg.trainer.ema_end_decay,
+                ema_anneal_end_step=cfg.trainer.ema_anneal_end_step,
                 adam_betas=(cfg.optimizer.b1, cfg.optimizer.b2),
                 adam_weight_decay=cfg.optimizer.weight_decay,
                 resample_sr=cfg.data.sr,
@@ -120,7 +123,7 @@ def setup_logger(cfg) -> TensorBoardLogger:
     """Set up TensorBoard logger with proper configuration."""
     identity = get_identity_from_cfg(cfg)
     return TensorBoardLogger(
-        f"{cfg.save_dir}/tb_logs_speech_jepa_lower_warmupß",
+        f"{cfg.save_dir}/tb_logs_speech_jepa",
         name=identity.replace("_", "/"),
     )
 
@@ -130,10 +133,10 @@ def setup_callbacks(cfg):
     identity = get_identity_from_cfg(cfg)
     
     checkpoint_callback = ModelCheckpoint(
-        dirpath=f"{cfg.save_dir}/saved_models_speech_jepa_lower_warmup/{identity.replace('_', '/')}",
+        dirpath=f"{cfg.save_dir}/saved_models_speech_jepa/{identity.replace('_', '/')}",
         filename="{step}",
         verbose=True,
-        every_n_train_steps=5000,
+        every_n_train_steps=25000,
         save_last=True,
         enable_version_counter=True,
         save_top_k=-1,
@@ -190,6 +193,7 @@ def create_data_module(cfg) -> pl.LightningDataModule:
             target_masks_per_context = cfg.masker.target_masks_per_context,
             conv_kernel = eval(cfg.extractor.conv_kernel),
             conv_stride = eval(cfg.extractor.conv_stride),
+            bucket_limits = cfg.data.bucket_limits,
             pin_memory = True,
         )
     else:
@@ -204,6 +208,7 @@ def create_data_module(cfg) -> pl.LightningDataModule:
             conv_kernel = eval(cfg.extractor.conv_kernel),
             conv_stride = eval(cfg.extractor.conv_stride),
             target_masks_per_context = cfg.masker.target_masks_per_context,
+            bucket_limits = cfg.data.bucket_limits,
             pin_memory = True,
         )
 

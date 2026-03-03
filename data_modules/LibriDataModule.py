@@ -53,6 +53,7 @@ class SSLDataModule(pl.LightningDataModule):
         conv_kernel: list =[10, 3, 3, 3, 3, 2, 2],
         conv_stride: list =[5, 2, 2, 2, 2, 2, 2],
         target_masks_per_context: int = 4,
+        bucket_limits: bool = False,
         pin_memory: bool = True,
         num_workers : int = 16
     ):
@@ -65,7 +66,9 @@ class SSLDataModule(pl.LightningDataModule):
             "conv_stride": self.hparams.conv_stride
         }
         self.token_func = partial(_get_feat_extract_output_lengths, cfg=cfg_dict)
-
+        self.bucket_limits = bucket_limits
+        if self.bucket_limits:
+            print("Bucket Limits are turned on")
     def _crop_audio(self, audio: torch.Tensor) -> torch.Tensor:
         assert audio.ndim == 1
         if audio.shape[0] > self.hparams.max_sample_len:
@@ -105,7 +108,7 @@ class SSLDataModule(pl.LightningDataModule):
         return cls.BUCKET_BOUNDARIES[-1]
 
     @staticmethod
-    def custom_collate_fn(batch, token_func, target_masks_per_ctx):
+    def custom_collate_fn(batch, token_func, target_masks_per_ctx, bucket_limits):
         """
         Groups dictionary samples into a single batch with padding.
         """
@@ -113,7 +116,8 @@ class SSLDataModule(pl.LightningDataModule):
         # Access using dictionary keys
         lengths = [item["signal"].shape[-1] for item in batch]
         max_len = max(lengths)
-        max_len = SSLDataModule.get_bucket_length(max_len)
+        if bucket_limits:
+            max_len = SSLDataModule.get_bucket_length(max_len)
         padded_audio = torch.zeros(batch_size, max_len)
         padding_mask = torch.zeros(batch_size, max_len, dtype=torch.bool)
 
@@ -156,7 +160,8 @@ class SSLDataModule(pl.LightningDataModule):
         bound_collate = partial(
             self.custom_collate_fn, 
             token_func=self.token_func, 
-            target_masks_per_ctx=self.hparams.target_masks_per_context
+            target_masks_per_ctx=self.hparams.target_masks_per_context,
+            bucket_limits=self.bucket_limits
         )
 
         dataset = (

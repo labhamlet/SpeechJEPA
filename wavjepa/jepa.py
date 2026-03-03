@@ -15,7 +15,6 @@ from wavjepa.functions import trunc_normal_
 from wavjepa.extractors.audio_extractor import Extractor
 from wavjepa.types import ForwardReturn, TransformerLayerCFG, TransformerEncoderCFG
 from data_modules.scene_module import generate_scenes_batch
-from data_modules.dataset_functions import pad_or_truncate_batch
 
 from wavjepa.pos_embed import Wav2Vec2PositionalConvEmbedding
 
@@ -116,7 +115,7 @@ class JEPA(pl.LightningModule):
         adam_weight_decay: float = 0.04,
         ema_decay: float = 0.999,
         ema_end_decay: float = 0.99999,
-        ema_anneal_end_step: int = 75000,
+        ema_anneal_end_step: int = 100000,
         warmup_steps: int = 30000,
         average_top_k_layers: int = 8,
         resample_sr : int = 16000,
@@ -180,11 +179,11 @@ class JEPA(pl.LightningModule):
         torch.nn.init.normal_(self.encoder_mask_token, std=0.02)
         self.apply(self._init_weights)
         self._init_teacher()
-        if False:
+        if compile_modules:
             self._compile_operations()
             self.collate_fn = torch.compile(collate_fn)
-            self.pad_or_truncate_batch = torch.compile(pad_or_truncate_batch)
             self.resample = torch.compile(resample)
+            self.masked_loss = torch.compile(self.masked_loss)
         else:
             self.collate_fn = collate_fn
 
@@ -222,7 +221,9 @@ class JEPA(pl.LightningModule):
             teacher.data.mul_(r).add_((1 - r) * student.detach().data)
 
     def _compile_operations(self):
-        compile_kwargs = {"mode": "reduce-overhead"}
+        compile_kwargs = {
+            "dynamic": True
+        }
         self.encoder = torch.compile(self.encoder, **compile_kwargs)
         self.decoder = torch.compile(self.decoder, **compile_kwargs)
         self.teacher_encoder = torch.compile(self.teacher_encoder, **compile_kwargs)

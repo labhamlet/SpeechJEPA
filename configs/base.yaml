@@ -8,4 +8,3 @@ defaults:
 model: JEPA
 save_dir: /projects/0/prjs1338
 seed: 42
-# ckpt_path : /gpfs/work4/0/prjs1338/saved_models_speech_jepa_cora/Data=LibriSpeechNoisy/Extractor=wav2vec2/BatchSize=None/NrGPUs=1/LR=0.0004/TargetProb=0.2/TargetLen=5/MinContextBlock=5/ContextRatio=0.4/step=50000.ckpt
