@@ -1,0 +1,17 @@
+data_dir: "/projects/0/prjs1338/libri/webdataset_output_libri/shard-{000000..000112}.tar"
+noise_path: "/projects/0/prjs1338/noise/wham_noise/tr/webdataset_output_32000/shard-{000000..000019}.tar"
+rir_path: "/gpfs/work5/0/prjs1261/SequentialAmbisonicRIRs32000/train/shard-{000000..000069}.tar"
+snr_low : -5 
+snr_high : 20
+original_sr : 32000
+sr : 16000
+in_channels: 1
+min_sample_len: 32000
+max_sample_len: 250000
+# max_batch_size: 20000000
+# target_batch_size: 20000000
+max_batch_size: 12000000
+target_batch_size: 12000000
+loudness_normalize: True
+name : LibriSpeechNoisy
+        

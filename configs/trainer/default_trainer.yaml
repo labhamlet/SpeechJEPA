@@ -1,0 +1,9 @@
+epochs: -1
+accelerator: gpu
+steps: 375000
+warmup_steps: 30000
+precision: bf16-mixed
+compile_modules: True
+num_gpus : 1
+size : base
+average_top_k_layers : 8

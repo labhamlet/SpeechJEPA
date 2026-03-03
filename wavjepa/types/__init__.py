@@ -1,0 +1,1 @@
+from .wavjepa_configs import ForwardReturn, TransformerEncoderCFG, TransformerLayerCFG as ForwardReturn, TransformerEncoderCFG, TransformerLayerCFG
