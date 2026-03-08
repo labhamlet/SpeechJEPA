@@ -8,3 +8,4 @@ defaults:
 model: JEPA
 save_dir: /projects/0/prjs1338
 seed: 42
+# ckpt_path : /gpfs/work4/0/prjs1338/saved_models_speech_jepa/Data=LibriSpeech/EMA=0.999/EMAEnd=0.99999/EMASteps=100000/MaxBatchSize=12000000/NrGPUs=1/LR=0.0004/LRWarmup=100000/TargetProb=0.2/TargetLen=5/MinContextBlock=5/ContextRatio=0.4/step=225000.ckpt

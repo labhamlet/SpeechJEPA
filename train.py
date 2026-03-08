@@ -100,8 +100,8 @@ class ComponentFactory:
                 feature_extractor=extractor,
                 transformer_encoder_cfg = TransformerEncoderCFG.create(), 
                 transformer_encoder_layers_cfg = TransformerLayerCFG.create(),
-                transformer_decoder_cfg = TransformerEncoderCFG.create(), 
-                transformer_decoder_layers_cfg = TransformerLayerCFG.create(d_model = 384),
+                transformer_decoder_cfg = TransformerEncoderCFG.create(num_layers=12), 
+                transformer_decoder_layers_cfg = TransformerLayerCFG.create(d_model = 192, nhead=3),
                 lr=cfg.optimizer.lr,
                 ema_decay=cfg.trainer.ema_decay,
                 ema_end_decay=cfg.trainer.ema_end_decay,
@@ -123,7 +123,7 @@ def setup_logger(cfg) -> TensorBoardLogger:
     """Set up TensorBoard logger with proper configuration."""
     identity = get_identity_from_cfg(cfg)
     return TensorBoardLogger(
-        f"{cfg.save_dir}/tb_logs_speech_jepa",
+        f"{cfg.save_dir}/tb_logs_speech_jepa_for_asr",
         name=identity.replace("_", "/"),
     )
 
@@ -133,10 +133,10 @@ def setup_callbacks(cfg):
     identity = get_identity_from_cfg(cfg)
     
     checkpoint_callback = ModelCheckpoint(
-        dirpath=f"{cfg.save_dir}/saved_models_speech_jepa/{identity.replace('_', '/')}",
+        dirpath=f"{cfg.save_dir}/saved_models_speech_jepa_for_asr/{identity.replace('_', '/')}",
         filename="{step}",
         verbose=True,
-        every_n_train_steps=25000,
+        every_n_train_steps=2500,
         save_last=True,
         enable_version_counter=True,
         save_top_k=-1,

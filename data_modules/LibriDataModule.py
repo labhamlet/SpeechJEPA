@@ -25,6 +25,7 @@ from .dataset_functions import normalize_audio
 
 from .utils import _get_feat_extract_output_lengths, visualize_masks
 
+import contextlib
 
 class SSLDataModule(pl.LightningDataModule):
     BUCKET_BOUNDARIES = [32000,
@@ -89,9 +90,13 @@ class SSLDataModule(pl.LightningDataModule):
         nr_tokens = self.token_func(audio.shape[-1]).item()
         
         # masker usually expects [B, T, C], we simulate B=1
-        ctx_mask, tgt_mask, ctx_tgt_masks = self.masker(
-            batch_size=1, n_times=nr_tokens, in_channels=1
-        )
+        while True:
+            with contextlib.suppress(BaseException):
+                ctx_mask, tgt_mask, ctx_tgt_masks = self.masker(
+                batch_size=1, n_times=nr_tokens, in_channels=1
+                )
+            break
+
         
         return {
             "signal": audio,
@@ -175,7 +180,7 @@ class SSLDataModule(pl.LightningDataModule):
                 partial(
                     sb.dataio.iterators.dynamic_bucketed_batch,
                     len_key="signal",
-                    buffersize=10384,
+                    buffersize=5096,
                     collate_fn=bound_collate,
                     sampler_kwargs={
                         "target_batch_numel": self.hparams.target_batch_size,

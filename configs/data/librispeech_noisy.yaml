@@ -8,8 +8,6 @@ sr : 16000
 in_channels: 1
 min_sample_len: 32000
 max_sample_len: 250000
-# max_batch_size: 20000000
-# target_batch_size: 20000000
 max_batch_size: 12000000
 target_batch_size: 12000000
 bucket_limits: True

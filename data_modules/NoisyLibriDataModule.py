@@ -161,7 +161,6 @@ class NoisySSLDataModule(pl.LightningDataModule):
         lengths = [item["signal"].shape[-1] for item in batch]
         max_len = max(lengths)
         if bucket_limits:
-            
             max_len = NoisySSLDataModule.get_bucket_length(max_len)
 
         padded_audio = torch.zeros(batch_size, max_len)
@@ -238,8 +237,8 @@ class NoisySSLDataModule(pl.LightningDataModule):
                     buffersize=512,
                     collate_fn=bound_collate,
                     sampler_kwargs={
-                        "target_batch_numel": self.hparams.target_batch_size,
-                        "max_batch_numel": self.hparams.max_batch_size,
+                        "target_batch_numel": self.hparams.target_batch_size * self.resampling_factor,
+                        "max_batch_numel": self.hparams.max_batch_size * self.resampling_factor,
                     },
                 )
             )

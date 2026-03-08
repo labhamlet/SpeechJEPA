@@ -1,7 +1,6 @@
 import torch
 
 from hear_api.runtime import RuntimeSpeechJEPA
-from wavjepa.extractors import ConvFeatureExtractor
 import sys 
 import wavjepa 
 from wavjepa.types import TransformerEncoderCFG, TransformerLayerCFG
@@ -24,11 +23,12 @@ def load_model(*args, **kwargs):
             "conv_stride": [5,2,2,2,2,2,2],
             "convs" : [(512, 10, 5)] + [(512, 3, 2)] * 4 + [(512,2,2)] + [(512,2,2)]
         }
+
     transformer_cfg = dict(
             transformer_encoder_cfg=TransformerEncoderCFG.create(),
             transformer_encoder_layers_cfg=TransformerLayerCFG.create(),
-            transformer_decoder_cfg=TransformerEncoderCFG.create(),
-            transformer_decoder_layers_cfg=TransformerLayerCFG.create(d_model=384),
+            transformer_decoder_cfg = TransformerEncoderCFG.create(num_layers=12), 
+            transformer_decoder_layers_cfg = TransformerLayerCFG.create(d_model = 192, nhead=3),
     )
 
     model = RuntimeSpeechJEPA(

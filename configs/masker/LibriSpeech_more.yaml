@@ -1,7 +1,7 @@
 target_masks_per_context : 4
-target_prob : 0.15
+target_prob : 0.3
 target_length : 10
-min_context_len: 5
-ratio_cutoff : 0.5
+min_context_len: 10
+ratio_cutoff : 0.1
 channel_based_masking : False
 name: speech-masker

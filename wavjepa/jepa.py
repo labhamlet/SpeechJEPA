@@ -116,7 +116,7 @@ class JEPA(pl.LightningModule):
         ema_decay: float = 0.999,
         ema_end_decay: float = 0.99999,
         ema_anneal_end_step: int = 100000,
-        warmup_steps: int = 30000,
+        warmup_steps: int = 100000,
         average_top_k_layers: int = 8,
         resample_sr : int = 16000,
         original_sr : int = 16000,
@@ -167,11 +167,7 @@ class JEPA(pl.LightningModule):
 
         self.encoder_pos_emb = Wav2Vec2PositionalConvEmbedding(hidden_size=self.encoder_embedding_dim)
         self.decoder_pos_emb = Wav2Vec2PositionalConvEmbedding(hidden_size=self.decoder_embedding_dim)
-        # For the autocast add batch dimensions.
-        self.mask_token = nn.Parameter(
-            torch.zeros(1, 1, self.decoder_embedding_dim, requires_grad=True)
-        )
-        torch.nn.init.normal_(self.mask_token, std=0.02)
+
  
         self.encoder_mask_token = nn.Parameter(
             torch.zeros(1, 1, self.encoder_embedding_dim, requires_grad=True)
@@ -266,10 +262,10 @@ class JEPA(pl.LightningModule):
         return y
 
     @torch.no_grad()
-    def _forward_teacher(self, x : torch.Tensor, padding_mask : torch.Tensor | None) -> torch.Tensor:
+    def _forward_teacher(self, x : torch.Tensor, attention_padding_mask : torch.Tensor | None) -> torch.Tensor:
         layer_outputs = []
         for i, bl in enumerate(self.teacher_encoder.layers): # type: ignore
-            x : torch.Tensor = bl(x, src_key_padding_mask = padding_mask)
+            x : torch.Tensor = bl(x, src_key_padding_mask = attention_padding_mask)
             if (
                 len(self.teacher_encoder.layers) - i
                 <= self.hparams.average_top_k_layers
@@ -277,7 +273,7 @@ class JEPA(pl.LightningModule):
                 layer_outputs.append(x)
 
         if self.hparams.average_top_k_layers > 1:
-            targets = self._make_targets(layer_outputs, padding_mask=padding_mask)
+            targets = self._make_targets(layer_outputs, padding_mask=attention_padding_mask)
         else:
             targets = layer_outputs[-1]
         return targets
@@ -378,41 +374,38 @@ class JEPA(pl.LightningModule):
         masked = loss_per_timestep * target_indices       # (B, N, T)
         return masked.sum() / (target_indices.sum() + 1e-8)
         
-
-    def _extract_audio(self, 
-                        audio: torch.Tensor, 
-                        mask_indices: Optional[torch.Tensor] = None, 
-                        padding_mask: Optional[torch.Tensor] = None):
-            
-        local_features = self.extract_audio(audio)
-        local_features = self.audio_feature_norms(local_features)
-        local_features = self.post_extraction_mapper(local_features)
-
-        # THE WAV2VEC2 TARGET LOGIC: Replace hidden targets with the Mask Token
+    
+    def _mask_hidden_states(self,
+                            local_features : torch.Tensor,
+                            mask_indices: Optional[torch.Tensor] = None, 
+                            attention_padding_mask: Optional[torch.Tensor] = None):
         if mask_indices is not None:
             B, T, _ = local_features.shape
             mask_tokens = self.encoder_mask_token.expand(B, T, -1).to(local_features.dtype)
             
             # Ensure we don't accidentally put mask tokens in the padded regions
-            # (Only put mask tokens where mask_indices is True AND padding_mask is False)
+            # (Only put mask tokens where mask_indices is True AND attention_padding_mask is False)
             valid_mask = mask_indices
-            if padding_mask is not None:
-                valid_mask = valid_mask & (~padding_mask)
+            if attention_padding_mask is not None:
+                valid_mask = valid_mask & (~attention_padding_mask)
                 
             mask_expanded = valid_mask.unsqueeze(-1)
             local_features = torch.where(mask_expanded, mask_tokens, local_features)
 
         # THE WAV2VEC2 PADDING LOGIC : Set padding to 0
-        if padding_mask is not None:
-            padding_expanded = padding_mask.unsqueeze(-1)
+        if attention_padding_mask is not None:
+            padding_expanded = attention_padding_mask.unsqueeze(-1)
             local_features = torch.where(padding_expanded, 0.0, local_features)
-
-        # Now the Positional Convolution is perfectly safe from both target leaks and padding noise
-        position_embeddings = self.encoder_pos_emb(local_features)
-        local_features = local_features + position_embeddings
-        local_features = self.local_feature_norms(local_features)
         
         return local_features
+    def _extract_audio(self, 
+                        audio: torch.Tensor):
+            
+        local_features = self.extract_audio(audio)
+        local_features = self.audio_feature_norms(local_features)
+        local_features = self.post_extraction_mapper(local_features)
+        return local_features
+        
 
     def forward(self, 
                 student_input : torch.Tensor, 
@@ -420,22 +413,33 @@ class JEPA(pl.LightningModule):
                 ctx_masks, 
                 target_indices, 
                 ctx_and_target_masks,
-                teacher_padding_masks) -> ForwardReturn:
+                attention_padding_mask) -> ForwardReturn:
         
         # Teacher: Only has padding (no masked targets)
-        teacher_features = self._extract_audio(teacher_input,
-                                               mask_indices=None,
-                                               padding_mask=teacher_padding_masks)
+        teacher_features = self._extract_audio(teacher_input)
+        teacher_features = self._mask_hidden_states(teacher_features,  
+                                                    mask_indices=None,
+                                                    attention_padding_mask=attention_padding_mask)
+        position_embeddings = self.encoder_pos_emb(teacher_features)
+        teacher_features = teacher_features + position_embeddings
+        teacher_features = self.local_feature_norms(teacher_features)
         teacher_features = teacher_features.detach()
         targets = self._forward_teacher(teacher_features, 
-                                        padding_mask=teacher_padding_masks)
+                                        attention_padding_mask=attention_padding_mask)
         
-        # Student: Has both targets (ctx_masks) AND padding
-        local_features = self._extract_audio(student_input,
-                                             mask_indices=ctx_masks,
-                                             padding_mask=teacher_padding_masks)
-                                             
-        contextual_features = self.encoder_forward(local_features, src_key_padding_mask=ctx_masks)
+
+        #Student
+        local_features = self._extract_audio(student_input)
+        local_features = self._mask_hidden_states(local_features, 
+                                                  mask_indices=ctx_masks,
+                                                  attention_padding_mask=attention_padding_mask)
+        position_embeddings = self.encoder_pos_emb(local_features)
+        local_features = local_features + position_embeddings
+        local_features = self.local_feature_norms(local_features)
+        contextual_features = self.encoder_forward(local_features, 
+                                                   attention_padding_mask=attention_padding_mask)
+        
+        #Decoder
         contextual_features = self.encoder_to_decoder_mapper(contextual_features)
 
         preds = self.decoder_forward(contextual_features, 
@@ -456,20 +460,11 @@ class JEPA(pl.LightningModule):
 
 
     def decoder_forward(self, contextual_features, ctx_mask, nr_targets, src_key_padding_mask=None):
-        B, seq_len = ctx_mask.shape
-        E = self.decoder_embedding_dim
-
-        # Start from all mask tokens
-        tgt = self.mask_token.expand(B, seq_len, E)                # (B, T, E)
-
-        # Blend context in via masking — no boolean indexing
-        ctx_mask_f = (~ctx_mask).unsqueeze(-1).to(contextual_features.dtype)  # (B, T, 1)
-        tgt = tgt * ctx_mask.unsqueeze(-1).to(tgt.dtype) + contextual_features * ctx_mask_f
-
         # Repeat for each target block
-        tgt = repeat(tgt, 'B S E -> (B N) S E', N=nr_targets)
+        tgt = repeat(contextual_features, 'B S E -> (B N) S E', N=nr_targets)
         src_key_padding_mask = rearrange(src_key_padding_mask, 'B N S -> (B N) S')
-
+        #Decoder takes the encoders mask token, and tries to predict yhe missing information from those mask tokens given the contextualized embedding
+        #It is important to keep the decoder shallow not to make encoder's job easy.
         position_embeddings = self.decoder_pos_emb(tgt)
         tgt = tgt + position_embeddings
         tgt = self.decoder(tgt, src_key_padding_mask=src_key_padding_mask)
@@ -478,22 +473,30 @@ class JEPA(pl.LightningModule):
 
     def encoder_forward(self, 
     x_contexts: torch.Tensor, 
-    src_key_padding_mask : torch.BoolTensor | None = None
+    attention_padding_mask : torch.BoolTensor | None = None
     ) -> torch.Tensor:
 
         if self.use_gradient_checkpointing and self.training:
             contextual_features = checkpoint(self.encoder, x_contexts, use_reentrant=False)
         else:
             contextual_features = self.encoder(x_contexts, 
-                                               src_key_padding_mask = src_key_padding_mask)
+                                               src_key_padding_mask = attention_padding_mask)
 
         return contextual_features
 
     @torch.inference_mode()
-    def get_audio_representation(self, audio : torch.Tensor, padding_mask : torch.tensor = None):
-        # Get the audio representatin of waveform x.
+    def get_audio_representation(self, audio : torch.Tensor, attention_padding_mask : torch.Tensor = None):
         self.eval()
-        local_features = self._extract_audio(audio, padding_mask=padding_mask)
+        
+        local_features = self._extract_audio(audio) 
+        
+        local_features = self._mask_hidden_states(local_features,  
+                                                mask_indices=None,
+                                                attention_padding_mask=attention_padding_mask)
+        position_embeddings = self.encoder_pos_emb(local_features)
+        local_features = local_features + position_embeddings
+        local_features = self.local_feature_norms(local_features)
+        
         contextual_features = self.encoder_forward(local_features, 
-                                                   src_key_padding_mask = padding_mask)
+                                                attention_padding_mask=attention_padding_mask)
         return contextual_features
