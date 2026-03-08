@@ -327,8 +327,8 @@ class JEPA(pl.LightningModule):
                 mode='nearest'
             ).squeeze(1).to(padding_mask_old.dtype)
 
-        # clean_scene = masked_instance_normalize(clean_scene, batch["padding_mask"])
-        # generated_scene = masked_instance_normalize(generated_scene, batch["padding_mask"])
+        clean_scene = masked_instance_normalize(clean_scene, batch["padding_mask"])
+        generated_scene = masked_instance_normalize(generated_scene, batch["padding_mask"])
 
         # Cast to bfloat16 and flatten batch and samples dimensions
         clean_scene = clean_scene.to(torch.bfloat16)
@@ -488,7 +488,6 @@ class JEPA(pl.LightningModule):
 
     @torch.inference_mode()
     def get_audio_representation(self, audio : torch.Tensor, attention_padding_mask : torch.tensor = None):
-        # Get the audio representatin of waveform x.
         self.eval()
         local_features = self._extract_audio(audio, padding_mask=attention_padding_mask)
         contextual_features = self.encoder_forward(local_features, 

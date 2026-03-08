@@ -27,7 +27,7 @@ def load_model(*args, **kwargs):
     transformer_cfg = dict(
             transformer_encoder_cfg=TransformerEncoderCFG.create(),
             transformer_encoder_layers_cfg=TransformerLayerCFG.create(),
-            transformer_decoder_cfg = TransformerEncoderCFG.create(num_layers=12), 
+            transformer_decoder_cfg = TransformerEncoderCFG.create(num_layers=4), 
             transformer_decoder_layers_cfg = TransformerLayerCFG.create(d_model = 192, nhead=3),
     )
 

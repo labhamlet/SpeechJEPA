@@ -15,6 +15,7 @@ from .scene_module.generate_scenes import fade_noise
 import torchaudio
 
 from .managers import RIRManager, NoiseManager
+import contextlib
 
 class NoisySSLDataModule(pl.LightningDataModule):
     BUCKET_BOUNDARIES = [32000 * 2,
@@ -113,10 +114,12 @@ class NoisySSLDataModule(pl.LightningDataModule):
         noise_rirs = rirs[1:]
         nr_tokens = self.token_func(int(audio.shape[-1] / self.resampling_factor)).item()
 
-        # masker usually expects [B, T, C], we simulate B=1
-        ctx_mask, tgt_mask, ctx_tgt_masks = self.masker(
-            batch_size=1, n_times=nr_tokens, in_channels=1
-        )
+        while True:
+            with contextlib.suppress(BaseException):
+                ctx_mask, tgt_mask, ctx_tgt_masks = self.masker(
+                batch_size=1, n_times=nr_tokens, in_channels=1
+                )
+            break
         
         return {
             "signal": audio,

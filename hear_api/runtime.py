@@ -3,29 +3,10 @@ import sys
 sys.path.append("..")
 import torch
 
-from wavjepa.jepa_asr import JEPA as JEPAASR
-from SpeechJEPA.wavjepa.jepa import JEPA as JEPA
+from wavjepa.jepa import JEPA
 from wavjepa.extractors import ConvFeatureExtractor
 from .feature_helper import FeatureExtractor
 from functools import partial 
-
-def instance_normalize(return_audio):
-    mean = return_audio.mean(dim=(-2, -1), keepdim=True)
-    std = return_audio.std(dim=(-2, -1), keepdim=True)
-    normalized = (return_audio - mean) / (std + 1e-5)
-    return normalized 
-
-def masked_instance_normalize(audio, mask):
-    active_mask = mask.unsqueeze(1) 
-    sum_audio = (audio * active_mask).sum(dim=-1, keepdim=True)
-    active_count = active_mask.sum(dim=-1, keepdim=True).clamp(min=1)
-    mean = sum_audio / active_count
-    
-    variance = (((audio - mean) * active_mask) ** 2).sum(dim=-1, keepdim=True) / active_count
-    std = torch.sqrt(variance)
-    
-    normalized = (audio - mean) / (std + 1e-5)
-    return normalized * active_mask
 
 def _get_feat_extract_output_lengths(input_lengths, cfg):
     def _conv_out_length(input_length, kernel_size, stride):
@@ -69,15 +50,7 @@ class RuntimeSpeechJEPA(torch.nn.Module):
             in_channels=1,
         )         
         self.token_func = partial(_get_feat_extract_output_lengths, cfg=conv_cfg)
-        if asr:
-            self.model = JEPAASR(
-                feature_extractor=extractor,
-                resample_sr=self.sample_rate,
-                size=model_size,
-                **transformer_cfg,
-            )
-        else:
-            self.model = JEPA(
+        self.model = JEPA(
                 feature_extractor=extractor,
                 resample_sr=self.sample_rate,
                 size=model_size,
