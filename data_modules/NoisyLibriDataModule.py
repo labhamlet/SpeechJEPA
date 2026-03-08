@@ -115,11 +115,13 @@ class NoisySSLDataModule(pl.LightningDataModule):
         nr_tokens = self.token_func(int(audio.shape[-1] / self.resampling_factor)).item()
 
         while True:
-            with contextlib.suppress(BaseException):
+            try:
                 ctx_mask, tgt_mask, ctx_tgt_masks = self.masker(
                 batch_size=1, n_times=nr_tokens, in_channels=1
                 )
-            break
+                break
+            except:  # noqa: E722
+                pass
         
         return {
             "signal": audio,

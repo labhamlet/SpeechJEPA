@@ -91,11 +91,13 @@ class SSLDataModule(pl.LightningDataModule):
         
         # masker usually expects [B, T, C], we simulate B=1
         while True:
-            with contextlib.suppress(BaseException):
+            try:
                 ctx_mask, tgt_mask, ctx_tgt_masks = self.masker(
                 batch_size=1, n_times=nr_tokens, in_channels=1
                 )
-            break
+                break
+            except:  # noqa: E722
+                pass
 
         
         return {
@@ -180,7 +182,7 @@ class SSLDataModule(pl.LightningDataModule):
                 partial(
                     sb.dataio.iterators.dynamic_bucketed_batch,
                     len_key="signal",
-                    buffersize=5096,
+                    buffersize=10192,
                     collate_fn=bound_collate,
                     sampler_kwargs={
                         "target_batch_numel": self.hparams.target_batch_size,
