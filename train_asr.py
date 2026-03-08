@@ -11,7 +11,7 @@ from pytorch_lightning.strategies import DDPStrategy
 from utils import get_identity_from_cfg
 from data_modules import SSLDataModule, NoisySSLDataModule
 
-from wavjepa.jepa import JEPA
+from SpeechJEPA.wavjepa.jepa_asr import JEPA
 from wavjepa.masking import SpeechMasker
 from wavjepa.extractors import ConvFeatureExtractor, Extractor
 from wavjepa.types import TransformerEncoderCFG, TransformerLayerCFG

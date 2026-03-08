@@ -5,7 +5,8 @@ import torch
 import math 
 
 
-from wavjepa.jepa import JEPA
+from SpeechJEPA.wavjepa.jepa_asr import JEPA as JEPAASR
+from SpeechJEPA.wavjepa.jepa import JEPA as JEPA
 from wavjepa.extractors import ConvFeatureExtractor
 from .feature_helper import FeatureExtractor
 from functools import partial 
@@ -59,6 +60,7 @@ class RuntimeSpeechJEPA(torch.nn.Module):
         sr,
         conv_cfg,
         transformer_cfg,
+        asr : bool = True,
         **kwargs,
     ) -> None:
         
@@ -69,12 +71,20 @@ class RuntimeSpeechJEPA(torch.nn.Module):
             in_channels=1,
         )         
         self.token_func = partial(_get_feat_extract_output_lengths, cfg=conv_cfg)
-        self.model = JEPA(
-            feature_extractor=extractor,
-            resample_sr=self.sample_rate,
-            size=model_size,
-            **transformer_cfg,
-        )
+        if asr:
+            self.model = JEPAASR(
+                feature_extractor=extractor,
+                resample_sr=self.sample_rate,
+                size=model_size,
+                **transformer_cfg,
+            )
+        else:
+            self.model = JEPA(
+                feature_extractor=extractor,
+                resample_sr=self.sample_rate,
+                size=model_size,
+                **transformer_cfg,
+            )
 
         new_state_dict = {}
         for key, value in weights["state_dict"].items():
