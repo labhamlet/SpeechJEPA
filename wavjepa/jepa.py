@@ -327,8 +327,8 @@ class JEPA(pl.LightningModule):
                 mode='nearest'
             ).squeeze(1).to(padding_mask_old.dtype)
 
-        clean_scene = masked_instance_normalize(clean_scene, batch["padding_mask"])
-        generated_scene = masked_instance_normalize(generated_scene, batch["padding_mask"])
+        # clean_scene = masked_instance_normalize(clean_scene, batch["padding_mask"])
+        # generated_scene = masked_instance_normalize(generated_scene, batch["padding_mask"])
 
         # Cast to bfloat16 and flatten batch and samples dimensions
         clean_scene = clean_scene.to(torch.bfloat16)
@@ -481,11 +481,8 @@ class JEPA(pl.LightningModule):
     src_key_padding_mask : torch.BoolTensor | None = None
     ) -> torch.Tensor:
 
-        if self.use_gradient_checkpointing and self.training:
-            contextual_features = checkpoint(self.encoder, x_contexts, use_reentrant=False)
-        else:
-            contextual_features = self.encoder(x_contexts, 
-                                               src_key_padding_mask = src_key_padding_mask)
+        contextual_features = self.encoder(x_contexts, 
+                                            src_key_padding_mask = src_key_padding_mask)
 
         return contextual_features
 

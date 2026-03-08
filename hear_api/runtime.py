@@ -2,10 +2,8 @@ import sys
 
 sys.path.append("..")
 import torch
-import math 
 
-
-from SpeechJEPA.wavjepa.jepa_asr import JEPA as JEPAASR
+from wavjepa.jepa_asr import JEPA as JEPAASR
 from SpeechJEPA.wavjepa.jepa import JEPA as JEPA
 from wavjepa.extractors import ConvFeatureExtractor
 from .feature_helper import FeatureExtractor
@@ -98,7 +96,7 @@ class RuntimeSpeechJEPA(torch.nn.Module):
                 new_key = key
             new_state_dict[new_key] = value
 
-        self.model.load_state_dict(new_state_dict, strict=False)
+        self.model.load_state_dict(new_state_dict, strict=True)
         self.embedding_size = self.model.encoder_embedding_dim
         self.scene_embedding_size = self.embedding_size
         self.timestamp_embedding_size = self.embedding_size

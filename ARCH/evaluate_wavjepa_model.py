@@ -22,7 +22,7 @@ from arch_eval import EMOVO
 
 from configs.wavjepa_wrapper import WavJEPAModelWrapper
 from wavjepa.extractors import ConvFeatureExtractor
-from wavjepa.jepa import JEPA
+from SpeechJEPA.wavjepa.jepa_asr import JEPA
 from wavjepa.types import TransformerEncoderCFG, TransformerLayerCFG
 import wavjepa
 import argparse

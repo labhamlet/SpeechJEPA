@@ -1,18 +1,6 @@
 import torch
 
 
-def loudness_normalize(audio_data, target_dBFS=-14.0):
-    rms = torch.sqrt(torch.mean(audio_data**2))
-    if rms == 0:  
-        return audio_data
-    current_dBFS = 20 * torch.log10(rms)
-    gain_dB = target_dBFS - current_dBFS
-    gain_linear = 10 ** (gain_dB / 20)
-    normalized_audio = audio_data * gain_linear
-    return normalized_audio
-
-
-# We need to put all the normalization w.r.t waveform and the RIR things here...
 class FeatureExtractor(torch.nn.Module):
     def __init__(
         self,
@@ -40,7 +28,6 @@ class FeatureExtractor(torch.nn.Module):
                 audio = audio.transpose(1, 0)
             if audio.ndim == 1:
                 audio = audio.unsqueeze(0)
-            # audio = loudness_normalize(audio)
             if audio.shape[0] == 1:
                 # For mono audio, duplicate the channel to create stereo
                 if self.in_channels == 2:

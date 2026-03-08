@@ -1,7 +1,6 @@
 import torch
 
 from hear_api.runtime import RuntimeSpeechJEPA
-from wavjepa.extractors import ConvFeatureExtractor
 import sys 
 import wavjepa 
 from wavjepa.types import TransformerEncoderCFG, TransformerLayerCFG
