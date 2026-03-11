@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch 
 import math 
+from typing import Optional
 
 class GELUActivation(nn.Module):
     """
@@ -60,3 +61,19 @@ class Wav2Vec2PositionalConvEmbedding(nn.Module):
 
         hidden_states = hidden_states.transpose(1, 2)
         return hidden_states
+    
+
+class SinusoidalPositionalEmbedding(nn.Module):
+    def __init__(self, d_model: int, max_len: int = 10000):
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe.unsqueeze(0)) # Shape: (1, max_len, d_model)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """ Adds absolute positional encoding to the input tensor. """
+        # x shape: (B, T, D)
+        return self.pe[:, :x.size(1), :].to(x.device)

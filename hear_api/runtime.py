@@ -4,7 +4,7 @@ sys.path.append("..")
 import torch
 
 from wavjepa.jepa import JEPA
-from wavjepa.jepa_quantized import JEPAQuantized
+from wavjepa.jepa_rope import JEPA as JEPARope
 from wavjepa.extractors import ConvFeatureExtractor
 from .feature_helper import FeatureExtractor
 from functools import partial 
@@ -40,8 +40,7 @@ class RuntimeSpeechJEPA(torch.nn.Module):
         sr,
         conv_cfg,
         transformer_cfg,
-        asr : bool = False,
-        quantized: bool = False,
+        rope : bool = False,
         **kwargs,
     ) -> None:
         
@@ -52,8 +51,8 @@ class RuntimeSpeechJEPA(torch.nn.Module):
             in_channels=1,
         )         
         self.token_func = partial(_get_feat_extract_output_lengths, cfg=conv_cfg)
-        if quantized:
-            self.model = JEPAQuantized(
+        if rope:
+            self.model = JEPARope(
                     feature_extractor=extractor,
                     resample_sr=self.sample_rate,
                     size=model_size,

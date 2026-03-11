@@ -39,6 +39,7 @@ def load_model(*args, **kwargs):
         conv_cfg = conv_cfg,
         transformer_cfg=transformer_cfg,
         asr = True,
+        rope = True
     )
     return model
 

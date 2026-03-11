@@ -1051,7 +1051,7 @@ def task_predictions_train(
         sys.stdout.flush()
         end = time.time()
         time_in_min = (end - start) / 60
-        epoch = torch.load(checkpoint_callback.best_model_path)["epoch"]
+        epoch = torch.load(checkpoint_callback.best_model_path, weights_only=False)["epoch"]
         if metadata["embedding_type"] == "event":
             best_postprocessing = predictor.epoch_best_postprocessing_or_default(epoch)
         else:

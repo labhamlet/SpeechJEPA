@@ -13,13 +13,16 @@ from data_modules import SSLDataModule, NoisySSLDataModule
 
 from wavjepa.jepa import JEPA
 from wavjepa.jepa_quantized import JEPAQuantized
+from wavjepa.jepa_rope import JEPA as JEPARope
+
 from wavjepa.masking import SpeechMasker
 from wavjepa.extractors import ConvFeatureExtractor, Extractor
 from wavjepa.types import TransformerEncoderCFG, TransformerLayerCFG
 
 # Component registries
 NETWORKS = {"JEPA": JEPA,
-            "JEPAQuantized": JEPAQuantized}
+            "JEPAQuantized": JEPAQuantized,
+            "JEPARope": JEPARope}
 MASKERS = {
     "speech-masker": SpeechMasker
 }
@@ -135,10 +138,10 @@ def setup_callbacks(cfg):
     identity = get_identity_from_cfg(cfg)
     
     checkpoint_callback = ModelCheckpoint(
-        dirpath=f"{cfg.save_dir}/saved_models_speech_jepa_asr/{identity.replace('_', '/')}",
+        dirpath=f"{cfg.save_dir}/saved_models_speech_jepa_asr_new/{identity.replace('_', '/')}",
         filename="{step}",
         verbose=True,
-        every_n_train_steps=10000,
+        every_n_train_steps=2500,
         save_last=True,
         enable_version_counter=True,
         save_top_k=-1,

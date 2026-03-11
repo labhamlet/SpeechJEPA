@@ -16,8 +16,8 @@ from wavjepa.extractors.audio_extractor import Extractor
 from wavjepa.types import ForwardReturn, TransformerLayerCFG, TransformerEncoderCFG
 from data_modules.scene_module import generate_scenes_batch
 
-from wavjepa.pos_embed import Wav2Vec2PositionalConvEmbedding,SinusoidalPositionalEmbedding
-
+from wavjepa.pos_embed import Wav2Vec2PositionalConvEmbedding
+from wavjepa.modules import TorchtuneEncoder
 
 def collate_fn(batch : List[torch.Tensor]) -> torch.Tensor:
     return batch.flatten(start_dim = 0, end_dim = 1)
@@ -155,21 +155,31 @@ class JEPA(pl.LightningModule):
         self.n_decoder_heads = transformer_decoder_layers_cfg["nhead"]
         self.decoder_embedding_dim = transformer_decoder_layers_cfg["d_model"]
 
-        encoder_layer = nn.TransformerEncoderLayer(**transformer_encoder_layers_cfg)
-        self.encoder = nn.TransformerEncoder(encoder_layer, norm = nn.LayerNorm(self.encoder_embedding_dim), **transformer_encoder_cfg)
+        self.encoder = TorchtuneEncoder(
+                 d_model = self.encoder_embedding_dim,
+                 dim_feedforward = self.encoder_embedding_dim * 4,
+                 norm_first = False,
+                 nhead = self.n_encoder_heads,
+                 num_layers = 12,
+                 max_seq_len=8192)
         self.post_extraction_mapper : Optional[nn.Module] = nn.Linear(feature_extractor.embedding_dim, self.encoder_embedding_dim) if feature_extractor.embedding_dim != self.encoder_embedding_dim else None
         self.local_feature_norms : nn.Module = nn.LayerNorm(self.encoder_embedding_dim)
 
-        decoder_layer = nn.TransformerEncoderLayer(**transformer_decoder_layers_cfg)
-        self.decoder = nn.TransformerEncoder(decoder_layer, norm = nn.LayerNorm(self.decoder_embedding_dim), **transformer_decoder_cfg)
+        self.decoder = TorchtuneEncoder(
+                 d_model = self.decoder_embedding_dim,
+                 dim_feedforward = self.decoder_embedding_dim * 4,
+                 norm_first = False,
+                 nhead = self.n_decoder_heads,
+                 num_layers = transformer_decoder_cfg["num_layers"],
+                 max_seq_len=8192)
+        
         self.decoder_to_encoder_mapper = nn.Linear(self.decoder_embedding_dim, self.encoder_embedding_dim, bias=True)
         self.encoder_to_decoder_mapper = nn.Linear(self.encoder_embedding_dim, self.decoder_embedding_dim)
 
         self.encoder_pos_emb = Wav2Vec2PositionalConvEmbedding(hidden_size=self.encoder_embedding_dim)
         self.decoder_pos_emb = Wav2Vec2PositionalConvEmbedding(hidden_size=self.decoder_embedding_dim)
 
-        self.encoder_sin_cos_pos_embedding = SinusoidalPositionalEmbedding(self.encoder_embedding_dim)
-        self.decoder_sin_cos_pos_embedding = SinusoidalPositionalEmbedding(self.decoder_embedding_dim)
+
 
         # For the autocast add batch dimensions.
         self.mask_token = nn.Parameter(
@@ -272,12 +282,23 @@ class JEPA(pl.LightningModule):
     @torch.no_grad()
     def _forward_teacher(self, x : torch.Tensor, padding_mask : torch.Tensor | None) -> torch.Tensor:
         layer_outputs = []
-        for i, bl in enumerate(self.teacher_encoder.layers): # type: ignore
-            x : torch.Tensor = bl(x, src_key_padding_mask = padding_mask)
-            if (
-                len(self.teacher_encoder.layers) - i
-                <= self.hparams.average_top_k_layers
-            ):
+        valid_tokens = ~padding_mask 
+        # SDPA expects [B, 1, S, S] or [B, S, S]. 
+        # Expansion is necessary for the fused kernel to trigger correctly.
+        mask = valid_tokens.view(x.shape[0], 1, x.shape[1]).expand(x.shape[0], x.shape[1], x.shape[1])
+        for i, layer in enumerate(self.teacher_encoder.layers):
+            if self.teacher_encoder.norm_first: # Pre-Norm
+                # Pass 'x' twice: once for query, once for key/value
+                normed_x = layer['norm_sa'](x)
+                x = x + layer['attn'](normed_x, normed_x, mask=mask)
+                x = x + layer['mlp'](layer['norm_mlp'](x))
+            else: # Post-Norm
+                # Pass 'x' twice: once for query, once for key/value
+                x = layer['norm_sa'](x + layer['attn'](x, x, mask=mask))
+                x = layer['norm_mlp'](x + layer['mlp'](x))
+            
+            # Collect top-k layers
+            if (len(self.teacher_encoder.layers) - i <= self.hparams.average_top_k_layers):
                 layer_outputs.append(x)
 
         if self.hparams.average_top_k_layers > 1:
@@ -410,7 +431,7 @@ class JEPA(pl.LightningModule):
             local_features = torch.where(padding_expanded, 0.0, local_features)
 
         # Now the Positional Convolution is perfectly safe from both target leaks and padding noise
-        position_embeddings = self.encoder_pos_emb(local_features) + self.encoder_sin_cos_pos_embedding(local_features)
+        position_embeddings = self.encoder_pos_emb(local_features)
         local_features = local_features + position_embeddings
         local_features = self.local_feature_norms(local_features)
         return local_features
@@ -478,7 +499,7 @@ class JEPA(pl.LightningModule):
         tgt = repeat(tgt, 'B S E -> (B N) S E', N=nr_targets)
         src_key_padding_mask = rearrange(src_key_padding_mask, 'B N S -> (B N) S')
 
-        position_embeddings = self.decoder_pos_emb(tgt) + self.decoder_sin_cos_pos_embedding(tgt)
+        position_embeddings = self.decoder_pos_emb(tgt)
         tgt = tgt + position_embeddings 
         tgt = self.decoder(tgt, src_key_padding_mask=src_key_padding_mask)
         return self.decoder_to_encoder_mapper(tgt)
