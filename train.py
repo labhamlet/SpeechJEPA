@@ -12,12 +12,14 @@ from utils import get_identity_from_cfg
 from data_modules import SSLDataModule, NoisySSLDataModule
 
 from wavjepa.jepa import JEPA
+from wavjepa.jepa_quantized import JEPAQuantized
 from wavjepa.masking import SpeechMasker
 from wavjepa.extractors import ConvFeatureExtractor, Extractor
 from wavjepa.types import TransformerEncoderCFG, TransformerLayerCFG
 
 # Component registries
-NETWORKS = {"JEPA": JEPA}
+NETWORKS = {"JEPA": JEPA,
+            "JEPAQuantized": JEPAQuantized}
 MASKERS = {
     "speech-masker": SpeechMasker
 }
@@ -100,8 +102,8 @@ class ComponentFactory:
                 feature_extractor=extractor,
                 transformer_encoder_cfg = TransformerEncoderCFG.create(), 
                 transformer_encoder_layers_cfg = TransformerLayerCFG.create(),
-                transformer_decoder_cfg = TransformerEncoderCFG.create(num_layers=4), 
-                transformer_decoder_layers_cfg = TransformerLayerCFG.create(d_model = 192, nhead=3),
+                transformer_decoder_cfg = TransformerEncoderCFG.create(num_layers=cfg.decoder.nr_layers), 
+                transformer_decoder_layers_cfg = TransformerLayerCFG.create(d_model=cfg.decoder.embedding_dim),
                 lr=cfg.optimizer.lr,
                 ema_decay=cfg.trainer.ema_decay,
                 ema_end_decay=cfg.trainer.ema_end_decay,
@@ -136,7 +138,7 @@ def setup_callbacks(cfg):
         dirpath=f"{cfg.save_dir}/saved_models_speech_jepa_asr/{identity.replace('_', '/')}",
         filename="{step}",
         verbose=True,
-        every_n_train_steps=2500,
+        every_n_train_steps=10000,
         save_last=True,
         enable_version_counter=True,
         save_top_k=-1,
