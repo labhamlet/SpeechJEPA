@@ -3,8 +3,7 @@ import sys
 sys.path.append("..")
 import torch
 
-from wavjepa.jepa import JEPA
-from wavjepa.jepa_rope import JEPA as JEPARope
+from wavjepa.jepa_rope import JEPA
 from wavjepa.extractors import ConvFeatureExtractor
 from .feature_helper import FeatureExtractor
 from functools import partial 
@@ -40,7 +39,9 @@ class RuntimeSpeechJEPA(torch.nn.Module):
         sr,
         conv_cfg,
         transformer_cfg,
-        rope : bool = False,
+        rope_encoder = True, 
+        rope_decoder = True, 
+        drop_kernel = True,
         **kwargs,
     ) -> None:
         
@@ -51,20 +52,15 @@ class RuntimeSpeechJEPA(torch.nn.Module):
             in_channels=1,
         )         
         self.token_func = partial(_get_feat_extract_output_lengths, cfg=conv_cfg)
-        if rope:
-            self.model = JEPARope(
-                    feature_extractor=extractor,
-                    resample_sr=self.sample_rate,
-                    size=model_size,
-                    **transformer_cfg,
-            )
-        else:
-            self.model = JEPA(
-                    feature_extractor=extractor,
-                    resample_sr=self.sample_rate,
-                    size=model_size,
-                    **transformer_cfg,
-            )
+        self.model = JEPA(
+                feature_extractor=extractor,
+                resample_sr=self.sample_rate,
+                size=model_size,
+                use_encoder_rope = rope_encoder,
+                use_decoder_rope = rope_decoder,
+                use_kernel_dropout = drop_kernel,
+                **transformer_cfg,
+        )
         new_state_dict = {}
         for key, value in weights["state_dict"].items():
             if key.startswith("extract_audio._orig_mod"):
@@ -73,6 +69,8 @@ class RuntimeSpeechJEPA(torch.nn.Module):
                 new_key = key.replace("encoder._orig_mod", "encoder")
             elif key.startswith("decoder._orig_mod"):
                 new_key = key.replace("decoder._orig_mod", "decoder")
+            elif key.startswith("teacher_encoder._orig_mod"):
+                new_key = key.replace("teacher_encoder._orig_mod", "teacher_encoder")
             else:
                 new_key = key
             new_state_dict[new_key] = value

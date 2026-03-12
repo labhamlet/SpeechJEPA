@@ -1,4 +1,5 @@
 import torch.nn as nn
+import torch.nn.functional as F 
 import torch 
 import math 
 from typing import Optional
@@ -59,6 +60,43 @@ class Wav2Vec2PositionalConvEmbedding(nn.Module):
         hidden_states = self.padding(hidden_states)
         hidden_states = self.activation(hidden_states)
 
+        hidden_states = hidden_states.transpose(1, 2)
+        return hidden_states
+    
+
+
+class NormalizedMaskedConvPositionalEmbedding(Wav2Vec2PositionalConvEmbedding):
+    def forward(self, hidden_states, mask):
+        """
+        hidden_states: (B, T, D)
+        mask: (B, T) - Boolean mask where True = Valid/Context, False = Masked/Padding
+        """
+
+        mask_float = mask.unsqueeze(1).type_as(hidden_states)
+        
+        hidden_states = hidden_states.transpose(1, 2)
+        
+        hidden_states = hidden_states * mask_float
+        hidden_states = self.conv(hidden_states)
+        hidden_states = self.padding(hidden_states)
+
+
+        k_size = self.conv.kernel_size[0]
+        pad = self.conv.padding[0]
+        
+        weight = torch.ones((1, 1, k_size), device=hidden_states.device, dtype=hidden_states.dtype)
+        valid_counts = F.conv1d(mask_float, weight, padding=pad)
+        valid_counts = self.padding(valid_counts) # Shape (B, 1, T)
+        counts_f32 = valid_counts.float()
+        
+        scale_factor = torch.where(
+            counts_f32 > 0, 
+            k_size / (counts_f32 + 1e-8), 
+            torch.zeros_like(counts_f32)
+        )
+        
+        hidden_states = hidden_states * scale_factor.to(hidden_states.dtype)
+        hidden_states = self.activation(hidden_states)
         hidden_states = hidden_states.transpose(1, 2)
         return hidden_states
     

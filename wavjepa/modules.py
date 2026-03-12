@@ -11,6 +11,7 @@ class TorchtuneEncoder(nn.Module):
                  norm_first: bool, 
                  nhead: int,
                  num_layers: int, 
+                 use_rope : bool,
                  max_seq_len=8192):
         
         super().__init__()
@@ -33,7 +34,7 @@ class TorchtuneEncoder(nn.Module):
                 k_proj=nn.Linear(self.d_model, self.d_model, bias=True),
                 v_proj=nn.Linear(self.d_model, self.d_model, bias=True),
                 output_proj=nn.Linear(self.d_model, self.d_model, bias=True),
-                pos_embeddings=rope,
+                pos_embeddings=rope if use_rope else None,
                 attn_dropout=0.0
             )
             

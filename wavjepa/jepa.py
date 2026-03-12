@@ -16,7 +16,7 @@ from wavjepa.extractors.audio_extractor import Extractor
 from wavjepa.types import ForwardReturn, TransformerLayerCFG, TransformerEncoderCFG
 from data_modules.scene_module import generate_scenes_batch
 
-from wavjepa.pos_embed import Wav2Vec2PositionalConvEmbedding,SinusoidalPositionalEmbedding
+from wavjepa.pos_embed import Wav2Vec2PositionalConvEmbedding
 
 
 def collate_fn(batch : List[torch.Tensor]) -> torch.Tensor:
@@ -126,6 +126,7 @@ class JEPA(pl.LightningModule):
         clean_audio_ratio : float = 0.0,
         **kwargs : dict[str, Any],
     ):
+
         super().__init__(**kwargs)
         self.sr = resample_sr 
         self.original_sr = original_sr
@@ -168,9 +169,6 @@ class JEPA(pl.LightningModule):
         self.encoder_pos_emb = Wav2Vec2PositionalConvEmbedding(hidden_size=self.encoder_embedding_dim)
         self.decoder_pos_emb = Wav2Vec2PositionalConvEmbedding(hidden_size=self.decoder_embedding_dim)
 
-        self.encoder_sin_cos_pos_embedding = SinusoidalPositionalEmbedding(self.encoder_embedding_dim)
-        self.decoder_sin_cos_pos_embedding = SinusoidalPositionalEmbedding(self.decoder_embedding_dim)
-
         # For the autocast add batch dimensions.
         self.mask_token = nn.Parameter(
             torch.zeros(1, 1, self.decoder_embedding_dim, requires_grad=True)
@@ -180,7 +178,7 @@ class JEPA(pl.LightningModule):
         self.encoder_mask_token = nn.Parameter(
             torch.zeros(1, 1, self.encoder_embedding_dim, requires_grad=True)
         )
-
+        torch.nn.init.normal_(self.encoder_mask_token, std=0.02)
         self.apply(self._init_weights)
         self._init_teacher()
         if compile_modules:
@@ -394,15 +392,14 @@ class JEPA(pl.LightningModule):
 
         # THE WAV2VEC2 TARGET LOGIC: Replace hidden targets with the Mask Token
         if mask_indices is not None:
-            
-            # Ensure we don't accidentally put mask tokens in the padded regions
-            # (Only put mask tokens where mask_indices is True AND padding_mask is False)
+            B, T, _ = local_features.shape
+            mask_tokens = self.encoder_mask_token.expand(B, T, -1).to(local_features.dtype)
             valid_mask = mask_indices
             if padding_mask is not None:
                 valid_mask = valid_mask & (~padding_mask)
                 
             mask_expanded = valid_mask.unsqueeze(-1)
-            local_features = torch.where(mask_expanded, 0.0, local_features)
+            local_features = torch.where(mask_expanded, mask_tokens, local_features)
 
         # THE WAV2VEC2 PADDING LOGIC : Set padding to 0
         if padding_mask is not None:
@@ -410,7 +407,7 @@ class JEPA(pl.LightningModule):
             local_features = torch.where(padding_expanded, 0.0, local_features)
 
         # Now the Positional Convolution is perfectly safe from both target leaks and padding noise
-        position_embeddings = self.encoder_pos_emb(local_features) + self.encoder_sin_cos_pos_embedding(local_features)
+        position_embeddings = self.encoder_pos_emb(local_features) 
         local_features = local_features + position_embeddings
         local_features = self.local_feature_norms(local_features)
         return local_features
@@ -478,7 +475,7 @@ class JEPA(pl.LightningModule):
         tgt = repeat(tgt, 'B S E -> (B N) S E', N=nr_targets)
         src_key_padding_mask = rearrange(src_key_padding_mask, 'B N S -> (B N) S')
 
-        position_embeddings = self.decoder_pos_emb(tgt) + self.decoder_sin_cos_pos_embedding(tgt)
+        position_embeddings = self.decoder_pos_emb(tgt)
         tgt = tgt + position_embeddings 
         tgt = self.decoder(tgt, src_key_padding_mask=src_key_padding_mask)
         return self.decoder_to_encoder_mapper(tgt)

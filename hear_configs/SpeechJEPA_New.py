@@ -18,6 +18,15 @@ def load_model(*args, **kwargs):
             map_location=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
         )
 
+
+    use_encoder_rope = kwargs.get("use_encoder_rope", "False") == "True"
+    use_decoder_rope = str(kwargs.get("use_decoder_rope", "False")) == "True"
+    use_kernel_dropout = kwargs.get("use_kernel_dropout", "False") == "True"
+
+    print(f"Encoder RoPE: {use_encoder_rope}")
+    print(f"Encoder RoPE: {use_decoder_rope}")
+    print(f"Kernel Dropout: {use_kernel_dropout}")
+
     conv_cfg = {
             "conv_kernel": [10,3,3,3,3,2,2],
             "conv_stride": [5,2,2,2,2,2,2],
@@ -27,8 +36,8 @@ def load_model(*args, **kwargs):
     transformer_cfg = dict(
             transformer_encoder_cfg=TransformerEncoderCFG.create(),
             transformer_encoder_layers_cfg=TransformerLayerCFG.create(),
-            transformer_decoder_cfg = TransformerEncoderCFG.create(num_layers=1), 
-            transformer_decoder_layers_cfg = TransformerLayerCFG.create(d_model = 192),
+            transformer_decoder_cfg = TransformerEncoderCFG.create(num_layers= 3), 
+            transformer_decoder_layers_cfg = TransformerLayerCFG.create(d_model = 384),
     )
 
     model = RuntimeSpeechJEPA(
@@ -38,7 +47,9 @@ def load_model(*args, **kwargs):
         model_size="base",
         conv_cfg = conv_cfg,
         transformer_cfg=transformer_cfg,
-        asr = True,
+        rope_encoder = use_encoder_rope, 
+        rope_decoder = use_decoder_rope, 
+        drop_kernel = use_kernel_dropout
     )
     return model
 

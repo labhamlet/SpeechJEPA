@@ -1,5 +1,8 @@
 def get_identity_from_cfg(cfg):
-    identity = "FixedPosEmbeddings_Data={}_EMA={}_EMAEnd={}_EMASteps={}_".format(
+    identity = "RopeEncoder={}_RopeDecoder={}_KernelDrop={}_Data={}_EMA={}_EMAEnd={}_EMASteps={}_".format(
+        cfg.trainer.get("use_rope_encoder", True), 
+        cfg.trainer.get("use_rope_decoder", True),
+        cfg.trainer.get("use_kernel_dropout", True),
         cfg.data.get("name", None),
         cfg.trainer.get("ema_decay"),
         cfg.trainer.get("ema_end_decay"),

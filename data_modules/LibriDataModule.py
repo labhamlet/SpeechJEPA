@@ -182,7 +182,7 @@ class SSLDataModule(pl.LightningDataModule):
                 partial(
                     sb.dataio.iterators.dynamic_bucketed_batch,
                     len_key="signal",
-                    buffersize=512,
+                    buffersize=10392,
                     collate_fn=bound_collate,
                     sampler_kwargs={
                         "target_batch_numel": self.hparams.target_batch_size,

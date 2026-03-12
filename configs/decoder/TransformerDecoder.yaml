@@ -1,2 +1,2 @@
-nr_layers: 1
-embedding_dim : 192
+nr_layers: 3
+embedding_dim : 384

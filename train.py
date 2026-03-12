@@ -11,9 +11,8 @@ from pytorch_lightning.strategies import DDPStrategy
 from utils import get_identity_from_cfg
 from data_modules import SSLDataModule, NoisySSLDataModule
 
-from wavjepa.jepa import JEPA
 from wavjepa.jepa_quantized import JEPAQuantized
-from wavjepa.jepa_rope import JEPA as JEPARope
+from wavjepa.jepa_rope import JEPA as JEPA
 
 from wavjepa.masking import SpeechMasker
 from wavjepa.extractors import ConvFeatureExtractor, Extractor
@@ -21,8 +20,7 @@ from wavjepa.types import TransformerEncoderCFG, TransformerLayerCFG
 
 # Component registries
 NETWORKS = {"JEPA": JEPA,
-            "JEPAQuantized": JEPAQuantized,
-            "JEPARope": JEPARope}
+            "JEPAQuantized": JEPAQuantized}
 MASKERS = {
     "speech-masker": SpeechMasker
 }
@@ -118,7 +116,10 @@ class ComponentFactory:
                 compile_modules = cfg.trainer.compile_modules,
                 average_top_k_layers = cfg.trainer.average_top_k_layers,
                 warmup_steps=cfg.trainer.warmup_steps,
-                size = cfg.trainer.get("size", "base")
+                size = cfg.trainer.get("size", "base"),
+                use_kernel_dropout = cfg.trainer.get("use_kernel_dropout", True),
+                use_encoder_rope = cfg.trainer.get("use_rope_encoder", True),
+                use_decoder_rope = cfg.trainer.get("use_rope_decoder", True),
             )
         except Exception as e:
             raise RuntimeError(f"Failed to create network instance: {str(e)}")
@@ -138,10 +139,10 @@ def setup_callbacks(cfg):
     identity = get_identity_from_cfg(cfg)
     
     checkpoint_callback = ModelCheckpoint(
-        dirpath=f"{cfg.save_dir}/saved_models_speech_jepa_asr_new/{identity.replace('_', '/')}",
+        dirpath=f"{cfg.save_dir}/saved_models_speech_jepa_asr/{identity.replace('_', '/')}",
         filename="{step}",
         verbose=True,
-        every_n_train_steps=2500,
+        every_n_train_steps=10000,
         save_last=True,
         enable_version_counter=True,
         save_top_k=-1,
