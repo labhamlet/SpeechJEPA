@@ -514,6 +514,7 @@ class JEPA(pl.LightningModule):
                                              padding_mask=teacher_padding_masks)
                                              
         contextual_features = self.encoder_forward(local_features, src_key_padding_mask=ctx_masks)
+        contextual_features = contextual_features[~ctx_masks]
         contextual_features = self.encoder_to_decoder_mapper(contextual_features)
 
         preds = self.decoder_forward(contextual_features, 
@@ -541,14 +542,14 @@ class JEPA(pl.LightningModule):
                         nr_targets, 
                         src_key_padding_mask=None):
         B, seq_len = ctx_mask.shape
-        E = self.decoder_embedding_dim
 
-        tgt = self.mask_token.expand(B, seq_len, E)                
-        
-        ctx_mask_f = (~ctx_mask).unsqueeze(-1).to(contextual_features.dtype)
-        tgt = tgt * ctx_mask.unsqueeze(-1).to(tgt.dtype) + contextual_features * ctx_mask_f
-        
-        # tgt = torch.where(padding_mask.unsqueeze(-1), 0.0, tgt)
+        tgt = self.mask_token.repeat(B, seq_len, 1).type_as(contextual_features) # (B, seq_len, decoder_dim)
+        #Get the context tokens.
+        tgt[~ctx_mask, :] = contextual_features.reshape((-1, self.decoder_embedding_dim))
+        tgt = tgt.reshape((B, -1, self.decoder_embedding_dim))
+       
+        #Replace padding tokens with 0.0
+        tgt = torch.where(padding_mask.unsqueeze(-1), 0.0, tgt)
 
         tgt = repeat(tgt, 'B S E -> (B N) S E', N=nr_targets)
         src_key_padding_mask = rearrange(src_key_padding_mask, 'B N S -> (B N) S')
