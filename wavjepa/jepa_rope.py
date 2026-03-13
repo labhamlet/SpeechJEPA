@@ -8,7 +8,6 @@ import torch
 from torch import nn
 from einops import repeat, rearrange
 import torch.nn.functional as F
-from torch.utils.checkpoint import checkpoint
 import pytorch_lightning as pl
 
 from wavjepa.functions import trunc_normal_
@@ -130,24 +129,6 @@ class JEPA(pl.LightningModule):
         **kwargs : dict[str, Any],
     ):
         
-        if use_kernel_dropout:
-            print("Using Kernel Dropout")
-        
-        if use_encoder_rope:
-            print("Using RoPE in Encoder")
-        
-        if use_decoder_rope:
-            print("Using RoPE in decoder")
-        
-        if not use_kernel_dropout:
-            print("Using Wav2Vec2.0 Positional Embeddings")
-
-        if not use_encoder_rope:
-            print("Not using RoPE in encoder") 
-
-        if not use_decoder_rope:
-            print("Not using RoPE in decoder")
-
         super().__init__(**kwargs)
         self.use_kernel_dropout = use_kernel_dropout
         self.sr = resample_sr 
@@ -551,15 +532,20 @@ class JEPA(pl.LightningModule):
         #Replace padding tokens with 0.0
         tgt = torch.where(padding_mask.unsqueeze(-1), 0.0, tgt)
 
-        tgt = repeat(tgt, 'B S E -> (B N) S E', N=nr_targets)
-        src_key_padding_mask = rearrange(src_key_padding_mask, 'B N S -> (B N) S')
+
+        tgt = repeat(tgt, 'B S E -> (B N) S E', N=nr_targets)   
+        src_key_padding_mask = rearrange(src_key_padding_mask, 'B N S -> (B N) S')     
+
+        #Here, positional embeddings of the decoder attends to the target tokens + context tokens 
+        #Ignoring the masked tokens, and the padding tokens.
         if self.use_kernel_dropout:
-            is_context = (~ctx_mask) & (~padding_mask)  
-            is_context_expanded = repeat(is_context, 'B S -> (B N) S', N=nr_targets)
-            position_embeddings = self.decoder_pos_emb(tgt, is_context_expanded)
+            padding_mask = repeat(padding_mask, 'B S -> (B N) S', N=nr_targets)
+            is_context_or_target = (~src_key_padding_mask) & (~padding_mask)  
+            position_embeddings = self.decoder_pos_emb(tgt, is_context_or_target)
         else:
             position_embeddings = self.decoder_pos_emb(tgt)
-        tgt = tgt + position_embeddings         
+        tgt = tgt + position_embeddings 
+
         tgt = self.decoder(tgt, src_key_padding_mask=src_key_padding_mask)
         return self.decoder_to_encoder_mapper(tgt)
 
