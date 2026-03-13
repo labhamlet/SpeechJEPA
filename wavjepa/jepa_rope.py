@@ -532,7 +532,7 @@ class JEPA(pl.LightningModule):
         #Replace padding tokens with 0.0
         tgt = torch.where(padding_mask.unsqueeze(-1), 0.0, tgt)
 
-
+        #Repeat the reconstructed sequence for each target token.
         tgt = repeat(tgt, 'B S E -> (B N) S E', N=nr_targets)   
         src_key_padding_mask = rearrange(src_key_padding_mask, 'B N S -> (B N) S')     
 
@@ -541,6 +541,7 @@ class JEPA(pl.LightningModule):
         if self.use_kernel_dropout:
             padding_mask = repeat(padding_mask, 'B S -> (B N) S', N=nr_targets)
             is_context_or_target = (~src_key_padding_mask) & (~padding_mask)  
+            #This expects True = Valid, and False=NonValid
             position_embeddings = self.decoder_pos_emb(tgt, is_context_or_target)
         else:
             position_embeddings = self.decoder_pos_emb(tgt)
