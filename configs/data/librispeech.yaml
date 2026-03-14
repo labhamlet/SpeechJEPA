@@ -4,9 +4,9 @@ original_sr: 16000
 in_channels: 1
 min_sample_len: 32000
 max_sample_len: 250000
-max_batch_size: 12000000
-target_batch_size: 12000000
+max_batch_size: 1600000
+target_batch_size: 1600000
 loudness_normalize: False
-bucket_limits : True
+bucket_limits : False
 name : LibriSpeech
         

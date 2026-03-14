@@ -6,7 +6,7 @@ ema_decay: 0.999
 ema_end_decay : 0.99999
 ema_anneal_end_step: 100000
 precision: bf16-mixed
-compile_modules: True
+compile_modules: False
 num_gpus : 1
 size : base
 average_top_k_layers : 8
