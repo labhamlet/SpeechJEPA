@@ -176,7 +176,7 @@ class JEPA(pl.LightningModule):
             encoder_layer = nn.TransformerEncoderLayer(**transformer_encoder_layers_cfg)
             self.encoder = nn.TransformerEncoder(encoder_layer, norm = nn.LayerNorm(self.encoder_embedding_dim), **transformer_encoder_cfg)
         
-        self.post_extraction_mapper : Optional[nn.Module] = nn.Linear(feature_extractor.embedding_dim, self.encoder_embedding_dim) if feature_extractor.embedding_dim != self.encoder_embedding_dim else None
+        self.post_extraction_mapper : Optional[nn.Module] = nn.Linear(feature_extractor.embedding_dim, self.encoder_embedding_dim)
         self.local_feature_norms : nn.Module = nn.LayerNorm(self.encoder_embedding_dim)
 
 
@@ -303,7 +303,7 @@ class JEPA(pl.LightningModule):
 
 
     @torch.no_grad()
-    def _forward_teacher(self, x : torch.Tensor, padding_mask : torch.Tensor | None) -> torch.Tensor:
+    def _forward_teacher(self, x : torch.Tensor, padding_mask : torch.Tensor) -> torch.Tensor:
         layer_outputs = []
         valid_tokens = ~padding_mask 
         mask = valid_tokens.view(x.shape[0], 1, x.shape[1]).expand(x.shape[0], x.shape[1], x.shape[1])
