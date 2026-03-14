@@ -21,11 +21,13 @@ def load_model(*args, **kwargs):
 
     use_encoder_rope = kwargs.get("use_encoder_rope", "False") == "True"
     use_decoder_rope = str(kwargs.get("use_decoder_rope", "False")) == "True"
-    use_kernel_dropout = kwargs.get("use_kernel_dropout", "False") == "True"
+    use_kernel_dropout_encoder = kwargs.get("use_kernel_dropout_encoder", "False") == "True"
+    use_kernel_dropout_decoder = kwargs.get("use_kernel_dropout_decoder", "False") == "True"
 
     print(f"Encoder RoPE: {use_encoder_rope}")
     print(f"Encoder RoPE: {use_decoder_rope}")
-    print(f"Kernel Dropout: {use_kernel_dropout}")
+    print(f"Kernel Dropout Encoder: {use_kernel_dropout_encoder}")
+    print(f"Kernel Dropout Decoder: {use_kernel_dropout_decoder}")
 
     conv_cfg = {
             "conv_kernel": [10,3,3,3,3,2,2],
@@ -49,7 +51,8 @@ def load_model(*args, **kwargs):
         transformer_cfg=transformer_cfg,
         rope_encoder = use_encoder_rope, 
         rope_decoder = use_decoder_rope, 
-        drop_kernel = use_kernel_dropout
+        drop_kernel_encoder = use_kernel_dropout_encoder, 
+        drop_kernel_decoder = use_kernel_dropout_decoder, 
     )
     return model
 

@@ -529,18 +529,21 @@ class JEPA(pl.LightningModule):
         # Start from all mask tokens
         tgt = self.mask_token.expand(B, seq_len, E)                # (B, T, E)
 
-        # Blend context in via masking — no boolean indexing
+        # Blend context in via masking
         ctx_mask_f = (~ctx_mask).unsqueeze(-1).to(contextual_features.dtype)  # (B, T, 1)
         tgt = tgt * ctx_mask.unsqueeze(-1).to(tgt.dtype) + contextual_features * ctx_mask_f
-        tgt = torch.where(padding_mask.unsqueeze(-1), 0.0, tgt)
+        
         tgt = repeat(tgt, 'B S E -> (B N) S E', N=nr_targets)
-        src_key_padding_mask = rearrange(src_key_padding_mask, 'B N S -> (B N) S')
 
+        src_key_padding_mask = rearrange(src_key_padding_mask, 'B N S -> (B N) S')
+        padding_mask = repeat(padding_mask, 'B S -> (B N) S', N=nr_targets)
+        #Attend only to context and target tokens.
         if self.use_kernel_dropout_decoder:
-            is_context = (~ctx_mask) & (~padding_mask)  
-            is_context_expanded = repeat(is_context, 'B S -> (B N) S', N=nr_targets)
-            position_embeddings = self.decoder_pos_emb(tgt, is_context_expanded)
+            is_context_or_tgt = (~src_key_padding_mask) & (~padding_mask)  
+            position_embeddings = self.decoder_pos_emb(tgt, is_context_or_tgt)
         else:
+            #Replace padding with 0.0s
+            tgt = torch.where(padding_mask.unsqueeze(-1), 0.0, tgt)
             position_embeddings = self.decoder_pos_emb(tgt)
         tgt = tgt + position_embeddings
         tgt = self.decoder(tgt, src_key_padding_mask=src_key_padding_mask)

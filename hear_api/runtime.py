@@ -41,7 +41,8 @@ class RuntimeSpeechJEPA(torch.nn.Module):
         transformer_cfg,
         rope_encoder = True, 
         rope_decoder = True, 
-        drop_kernel = True,
+        drop_kernel_encoder = True,
+        drop_kernel_decoder = True,
         **kwargs,
     ) -> None:
         
@@ -58,7 +59,8 @@ class RuntimeSpeechJEPA(torch.nn.Module):
                 size=model_size,
                 use_encoder_rope = rope_encoder,
                 use_decoder_rope = rope_decoder,
-                use_kernel_dropout = drop_kernel,
+                use_kernel_dropout_encoder = drop_kernel_encoder,
+                use_kernel_dropout_decoder = drop_kernel_decoder,
                 **transformer_cfg,
         )
         new_state_dict = {}
