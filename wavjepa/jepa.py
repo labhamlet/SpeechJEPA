@@ -127,12 +127,14 @@ class JEPA(pl.LightningModule):
         clean_audio_ratio : float = 0.0,
         use_encoder_rope : bool = True,
         use_decoder_rope : bool = True,
-        use_kernel_dropout : bool = True,
+        use_kernel_dropout_encoder : bool = True,
+        use_kernel_dropout_decoder : bool = True,
         **kwargs : dict[str, Any],
     ):
         
         super().__init__(**kwargs)
-        self.use_kernel_dropout = use_kernel_dropout
+        self.use_kernel_dropout_encoder = use_kernel_dropout_encoder
+        self.use_kernel_dropout_decoder = use_kernel_dropout_decoder
         self.sr = resample_sr 
         self.original_sr = original_sr
         self.ema_end_step = ema_anneal_end_step
@@ -196,16 +198,21 @@ class JEPA(pl.LightningModule):
         self.decoder_to_encoder_mapper = nn.Linear(self.decoder_embedding_dim, self.encoder_embedding_dim, bias=True)
         self.encoder_to_decoder_mapper = nn.Linear(self.encoder_embedding_dim, self.decoder_embedding_dim)
 
-        if use_kernel_dropout:
+        if use_kernel_dropout_encoder:
             self.encoder_pos_emb = NormalizedMaskedConvPositionalEmbedding(hidden_size=self.encoder_embedding_dim)
-            self.decoder_pos_emb = NormalizedMaskedConvPositionalEmbedding(hidden_size=self.decoder_embedding_dim)
+
         else: 
             self.encoder_pos_emb = Wav2Vec2PositionalConvEmbedding(hidden_size=self.encoder_embedding_dim)
-            self.decoder_pos_emb = Wav2Vec2PositionalConvEmbedding(hidden_size=self.decoder_embedding_dim)
             self.encoder_mask_token = nn.Parameter(
             torch.zeros(1, 1, self.encoder_embedding_dim, requires_grad=True)
             )
             torch.nn.init.normal_(self.encoder_mask_token, std=0.02)
+
+        if use_kernel_dropout_decoder:
+            self.decoder_pos_emb = NormalizedMaskedConvPositionalEmbedding(hidden_size=self.decoder_embedding_dim)
+            
+        else:
+            self.decoder_pos_emb = Wav2Vec2PositionalConvEmbedding(hidden_size=self.decoder_embedding_dim)
 
         # For the autocast add batch dimensions.
         self.mask_token = nn.Parameter(
@@ -438,7 +445,7 @@ class JEPA(pl.LightningModule):
         local_features = self.audio_feature_norms(local_features)
         local_features = self.post_extraction_mapper(local_features)
 
-        if self.use_kernel_dropout:
+        if self.use_kernel_dropout_encoder:
             B, T, _ = local_features.shape
             valid_mask = torch.ones([B,T], dtype=torch.bool, device = local_features.device)
             if mask_indices is not None:
@@ -525,18 +532,16 @@ class JEPA(pl.LightningModule):
         # Blend context in via masking — no boolean indexing
         ctx_mask_f = (~ctx_mask).unsqueeze(-1).to(contextual_features.dtype)  # (B, T, 1)
         tgt = tgt * ctx_mask.unsqueeze(-1).to(tgt.dtype) + contextual_features * ctx_mask_f
+        tgt = torch.where(padding_mask.unsqueeze(-1), 0.0, tgt)
         tgt = repeat(tgt, 'B S E -> (B N) S E', N=nr_targets)
         src_key_padding_mask = rearrange(src_key_padding_mask, 'B N S -> (B N) S')
-        padding_mask = repeat(padding_mask, 'B S -> (B N) S', N=nr_targets)
 
-        #If using kernel dropout, attend only to contextual tokens and target tokens
-        if self.use_kernel_dropout:
-            is_context_or_tgt = (~src_key_padding_mask) & (~padding_mask)  
-            position_embeddings = self.decoder_pos_emb(tgt, is_context_or_tgt)
+        if self.use_kernel_dropout_decoder:
+            is_context = (~ctx_mask) & (~padding_mask)  
+            is_context_expanded = repeat(is_context, 'B S -> (B N) S', N=nr_targets)
+            position_embeddings = self.decoder_pos_emb(tgt, is_context_expanded)
         else:
-            tgt = torch.where(padding_mask.unsqueeze(-1), 0.0, tgt)
             position_embeddings = self.decoder_pos_emb(tgt)
-        
         tgt = tgt + position_embeddings
         tgt = self.decoder(tgt, src_key_padding_mask=src_key_padding_mask)
         return self.decoder_to_encoder_mapper(tgt)

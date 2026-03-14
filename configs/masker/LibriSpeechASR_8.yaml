@@ -1,5 +1,5 @@
 target_masks_per_context : 8
-target_prob : 0.10
+target_prob : 0.1
 target_length : 10
 min_context_len: 5
 ratio_cutoff : 0.1

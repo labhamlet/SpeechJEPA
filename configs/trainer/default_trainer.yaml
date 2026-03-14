@@ -12,4 +12,5 @@ size : base
 average_top_k_layers : 8
 use_rope_encoder : True 
 use_rope_decoder : True
-use_kernel_dropout : True
+use_kernel_dropout_encoder : True
+use_kernel_dropout_decoder : True

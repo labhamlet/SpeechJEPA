@@ -117,7 +117,8 @@ class ComponentFactory:
                 average_top_k_layers = cfg.trainer.average_top_k_layers,
                 warmup_steps=cfg.trainer.warmup_steps,
                 size = cfg.trainer.get("size", "base"),
-                use_kernel_dropout = cfg.trainer.get("use_kernel_dropout", True),
+                use_kernel_dropout_encoder = cfg.trainer.get("use_kernel_dropout_encoder", True),
+                use_kernel_dropout_decoder = cfg.trainer.get("use_kernel_dropout_decoder", True),
                 use_encoder_rope = cfg.trainer.get("use_rope_encoder", True),
                 use_decoder_rope = cfg.trainer.get("use_rope_decoder", True),
             )
@@ -139,7 +140,7 @@ def setup_callbacks(cfg):
     identity = get_identity_from_cfg(cfg)
     
     checkpoint_callback = ModelCheckpoint(
-        dirpath=f"{cfg.save_dir}/saved_models_speech_jepa_asr_repr/{identity.replace('_', '/')}",
+        dirpath=f"{cfg.save_dir}/saved_models_speech_jepa_asr_repr_again/{identity.replace('_', '/')}",
         filename="{step}",
         verbose=True,
         every_n_train_steps=10000,
