@@ -24,7 +24,6 @@ class TorchtuneEncoder(nn.Module):
 
         self.layers = nn.ModuleList()
         for _ in range(num_layers):
-            # 1. Multi-Head Attention
             attn = MultiHeadAttention(
                 embed_dim=self.d_model,
                 num_heads=nhead,
@@ -38,7 +37,6 @@ class TorchtuneEncoder(nn.Module):
                 attn_dropout=0.0
             )
             
-            # 2. Feed Forward (MLP)
             mlp = nn.Sequential(
                 nn.Linear(self.d_model, dim_feedforward, bias=True),
                 nn.GELU(),
@@ -47,7 +45,6 @@ class TorchtuneEncoder(nn.Module):
                 nn.Dropout(0.0)
             )
             
-            # 3. Norms
             norm_sa = nn.LayerNorm(self.d_model, eps=1e-6)
             norm_mlp = nn.LayerNorm(self.d_model, eps=1e-6)
             
@@ -67,10 +64,7 @@ class TorchtuneEncoder(nn.Module):
         # JEPA/nn.Transformer wants True = Mask, False = Keep.
         mask = None
         if src_key_padding_mask is not None:
-            # Flip logic: True (padding) becomes False (ignore)
             valid_tokens = ~src_key_padding_mask 
-            # SDPA expects [B, 1, S, S] or [B, S, S]. 
-            # Expansion is necessary for the fused kernel to trigger correctly.
             mask = valid_tokens.view(B, 1, S).expand(B, S, S)
 
         for layer in self.layers:

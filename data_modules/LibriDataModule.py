@@ -136,6 +136,7 @@ class SSLDataModule(pl.LightningDataModule):
         ctx_tgt_masks = torch.ones(batch_size, target_masks_per_ctx, nr_of_tokens_per_padded_audio, dtype=torch.bool)
         tgt_masks = torch.zeros(batch_size, target_masks_per_ctx, nr_of_tokens_per_padded_audio, dtype=torch.bool)
         total_batch_len = 0
+
         for i, item in enumerate(batch):        
             sig = item["signal"]
             length = lengths[i]
@@ -182,7 +183,7 @@ class SSLDataModule(pl.LightningDataModule):
                 partial(
                     sb.dataio.iterators.dynamic_bucketed_batch,
                     len_key="signal",
-                    buffersize=512,
+                    buffersize=8192,
                     collate_fn=bound_collate,
                     sampler_kwargs={
                         "target_batch_numel": self.hparams.target_batch_size,

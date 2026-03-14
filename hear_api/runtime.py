@@ -3,7 +3,7 @@ import sys
 sys.path.append("..")
 import torch
 
-from wavjepa.jepa_rope import JEPA
+from wavjepa.jepa import JEPA
 from wavjepa.extractors import ConvFeatureExtractor
 from .feature_helper import FeatureExtractor
 from functools import partial 
