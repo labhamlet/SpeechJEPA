@@ -461,15 +461,14 @@ class JEPA(pl.LightningModule):
                         padding_mask, 
                         nr_targets, 
                         src_key_padding_mask=None):
-        B, seq_len = ctx_mask.shape
-        E = self.decoder_embedding_dim
-
-        # Start from all mask tokens
-        tgt = self.mask_token.expand(B, seq_len, E)                # (B, T, E)
-
-        # Blend context in via masking — no boolean indexing
-        ctx_mask_f = (~ctx_mask).unsqueeze(-1).to(contextual_features.dtype)  # (B, T, 1)
-        tgt = tgt * ctx_mask.unsqueeze(-1).to(tgt.dtype) + contextual_features * ctx_mask_f
+        B, _ = ctx_mask.shape
+        
+        tgt = self.mask_token.repeat(B, self.total_patches, 1).type_as(contextual_features) # (B, seq_len, decoder_dim)
+        #Get the context tokens.
+        tgt[~ctx_mask, :] = contextual_features.reshape((-1, self.decoder_embedding_dim))
+        tgt = tgt.reshape((B, -1, self.decoder_embedding_dim))
+       
+        #Replace padding tokens with 0.0
         tgt = torch.where(padding_mask.unsqueeze(-1), 0.0, tgt)
         # Repeat for each target block
         tgt = repeat(tgt, 'B S E -> (B N) S E', N=nr_targets)

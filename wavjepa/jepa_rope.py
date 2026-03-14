@@ -166,7 +166,7 @@ class JEPA(pl.LightningModule):
                     dim_feedforward = self.encoder_embedding_dim * 4,
                     norm_first = False,
                     nhead = self.n_encoder_heads,
-                    num_layers = 12,
+                    num_layers = transformer_encoder_cfg["num_layers"],
                     use_rope = True,
                     max_seq_len=8192
                     )
@@ -440,7 +440,7 @@ class JEPA(pl.LightningModule):
             is_valid = torch.ones((B, T), device=local_features.device, dtype=torch.bool)
             
             if mask_indices is not None:
-                is_valid = is_valid & (~mask_indices) # ~mask_indices means it is NOT a target/masked
+                is_valid = is_valid & (~mask_indices)
                 
             if padding_mask is not None:
                 is_valid = is_valid & (~padding_mask)
@@ -495,7 +495,6 @@ class JEPA(pl.LightningModule):
                                              padding_mask=teacher_padding_masks)
                                              
         contextual_features = self.encoder_forward(local_features, src_key_padding_mask=ctx_masks)
-        contextual_features = contextual_features[~ctx_masks]
         contextual_features = self.encoder_to_decoder_mapper(contextual_features)
 
         preds = self.decoder_forward(contextual_features, 
@@ -516,6 +515,8 @@ class JEPA(pl.LightningModule):
         )
 
 
+
+
     def decoder_forward(self, 
                         contextual_features, 
                         ctx_mask, 
@@ -523,34 +524,28 @@ class JEPA(pl.LightningModule):
                         nr_targets, 
                         src_key_padding_mask=None):
         B, seq_len = ctx_mask.shape
+        E = self.decoder_embedding_dim
 
-        tgt = self.mask_token.repeat(B, seq_len, 1).type_as(contextual_features) # (B, seq_len, decoder_dim)
-        #Get the context tokens.
-        tgt[~ctx_mask, :] = contextual_features.reshape((-1, self.decoder_embedding_dim))
-        tgt = tgt.reshape((B, -1, self.decoder_embedding_dim))
-       
-        #Replace padding tokens with 0.0
+        # Start from all mask tokens
+        tgt = self.mask_token.expand(B, seq_len, E)                # (B, T, E)
+
+        # Blend context in via masking — no boolean indexing
+        ctx_mask_f = (~ctx_mask).unsqueeze(-1).to(contextual_features.dtype)  # (B, T, 1)
+        tgt = tgt * ctx_mask.unsqueeze(-1).to(tgt.dtype) + contextual_features * ctx_mask_f
         tgt = torch.where(padding_mask.unsqueeze(-1), 0.0, tgt)
-
-        #Repeat the reconstructed sequence for each target token.
-        tgt = repeat(tgt, 'B S E -> (B N) S E', N=nr_targets)   
-        src_key_padding_mask = rearrange(src_key_padding_mask, 'B N S -> (B N) S')     
-
-        #Here, positional embeddings of the decoder attends to the target tokens + context tokens 
-        #Ignoring the masked tokens, and the padding tokens.
+        # Repeat for each target block
+        tgt = repeat(tgt, 'B S E -> (B N) S E', N=nr_targets)
+        src_key_padding_mask = rearrange(src_key_padding_mask, 'B N S -> (B N) S')
         if self.use_kernel_dropout:
-            padding_mask = repeat(padding_mask, 'B S -> (B N) S', N=nr_targets)
-            is_context_or_target = (~src_key_padding_mask) & (~padding_mask)  
-            #This expects True = Valid, and False=NonValid
-            position_embeddings = self.decoder_pos_emb(tgt, is_context_or_target)
+            is_context = (~ctx_mask) & (~padding_mask)  
+            is_context_expanded = repeat(is_context, 'B S -> (B N) S', N=nr_targets)
+            position_embeddings = self.decoder_pos_emb(tgt, is_context_expanded)
         else:
             position_embeddings = self.decoder_pos_emb(tgt)
-        tgt = tgt + position_embeddings 
-
+        tgt = tgt + position_embeddings
         tgt = self.decoder(tgt, src_key_padding_mask=src_key_padding_mask)
         return self.decoder_to_encoder_mapper(tgt)
-
-
+    
     def encoder_forward(self, 
     x_contexts: torch.Tensor, 
     src_key_padding_mask : torch.BoolTensor | None = None
