@@ -157,7 +157,7 @@ def setup_trainer(cfg, logger, callbacks) -> pl.Trainer:
     """Set up PyTorch Lightning trainer with proper configuration."""
     num_gpus = int(cfg.trainer.num_gpus)
     if num_gpus > 1:
-        strategy = DDPStrategy(static_graph=False, find_unused_parameters=True)
+        strategy = DDPStrategy(static_graph=False, find_unused_parameters=False)
     else:
         strategy = "auto"
     return pl.Trainer(

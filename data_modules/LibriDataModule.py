@@ -173,7 +173,12 @@ class SSLDataModule(pl.LightningDataModule):
         )
 
         dataset = (
-            wds.WebDataset(path, resampled=True, handler=wds.warn_and_continue)
+            wds.WebDataset(path, 
+                           resampled=True, 
+                            nodesplitter=wds.shardlists.split_by_node,
+                            workersplitter=wds.shardlists.split_by_worker,
+                            shardshuffle=False,
+                           handler=wds.warn_and_continue)
             .decode(wds.torch_audio, handler=wds.warn_and_continue)
             .rename(signal="flac")
             .select(lambda x: x["signal"][0].shape[-1] >= self.hparams.min_sample_len)
