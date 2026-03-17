@@ -4,6 +4,8 @@ sys.path.append("..")
 import torch
 
 from wavjepa.jepa import JEPA
+from wavjepa.jepa_d2v2 import JEPA as JEPAD2V2
+
 from wavjepa.extractors import ConvFeatureExtractor
 from .feature_helper import FeatureExtractor
 from functools import partial 
@@ -53,14 +55,10 @@ class RuntimeSpeechJEPA(torch.nn.Module):
             in_channels=1,
         )         
         self.token_func = partial(_get_feat_extract_output_lengths, cfg=conv_cfg)
-        self.model = JEPA(
+        self.model = JEPAD2V2(
                 feature_extractor=extractor,
                 resample_sr=self.sample_rate,
                 size=model_size,
-                use_encoder_rope = rope_encoder,
-                use_decoder_rope = rope_decoder,
-                use_kernel_dropout_encoder = drop_kernel_encoder,
-                use_kernel_dropout_decoder = drop_kernel_decoder,
                 **transformer_cfg,
         )
         new_state_dict = {}
