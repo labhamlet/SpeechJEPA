@@ -431,18 +431,14 @@ class JEPA(pl.LightningModule):
                 teacher_padding_masks) -> ForwardReturn:
         
         # Teacher: Only has padding (no masked targets)
-        teacher_features = self._extract_audio(teacher_input,
-                                               mask_indices=None,
-                                               attention_padding_mask=teacher_padding_masks)
+        teacher_features = self._extract_audio(teacher_input)
         teacher_features = teacher_features.detach()
         #Teacher only ignores the padding tokens
         targets = self._forward_teacher(teacher_features, 
                                         padding_mask=teacher_padding_masks)
         
         # Student: Has both targets (ctx_masks) AND padding
-        local_features = self._extract_audio(student_input,
-                                             mask_indices=ctx_masks,
-                                             attention_padding_mask=teacher_padding_masks)
+        local_features = self._extract_audio(student_input)
         #Here student ignroes the padding tokens + non context tokens                                     
         contextual_features = self.encoder_forward(local_features, src_key_padding_mask=ctx_masks)
         #Here decoder ignores the padding tokens + non target tokens.
