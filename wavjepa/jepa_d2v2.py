@@ -412,9 +412,7 @@ class JEPA(pl.LightningModule):
         
 
     def _extract_audio(self, 
-                        audio: torch.Tensor, 
-                        mask_indices: Optional[torch.Tensor] = None, 
-                        attention_padding_mask: Optional[torch.Tensor] = None):
+                        audio: torch.Tensor):
             
         local_features = self.extract_audio(audio)
         local_features = self.audio_feature_norms(local_features)
@@ -501,7 +499,7 @@ class JEPA(pl.LightningModule):
 
     @torch.inference_mode()
     def get_audio_representation(self, audio : torch.Tensor, attention_padding_mask : torch.tensor = None):
-        local_features = self._extract_audio(audio, attention_padding_mask=attention_padding_mask)
+        local_features = self._extract_audio(audio)
         contextual_features = self.encoder_forward(local_features, 
                                                    src_key_padding_mask = attention_padding_mask)
         return contextual_features

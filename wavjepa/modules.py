@@ -59,9 +59,11 @@ class TorchtuneEncoder(nn.Module):
 
         self.final_norm = nn.LayerNorm(self.d_model, eps=1e-6) if self.norm_first else nn.Identity()
 
-    def forward(self, x, src_key_padding_mask=None):
+    def forward(self, x, src_key_padding_mask=None, output_hidden_states=False):
         B, S, E = x.shape
-        
+        states = None 
+        if output_hidden_states:
+            states = []
         # SDPA Mask: torchtune/SDPA wants True = Keep, False = Mask.
         # JEPA/nn.Transformer wants True = Mask, False = Keep.
         mask = None
@@ -70,16 +72,20 @@ class TorchtuneEncoder(nn.Module):
             mask = valid_tokens.view(B, 1, S).expand(B, S, S)
 
         for layer in self.layers:
-            if self.norm_first: # Pre-Norm (Modern/LLM style)
+            if self.norm_first:
                 normed_x = layer['norm_sa'](x)
                 x = x + layer['attn'](normed_x, normed_x, mask=mask)
                 x = x + layer['mlp'](layer['norm_mlp'](x))
-            else: # Post-Norm
-                # Pass 'x' twice: once for query, once for key/value
+            else: 
                 x = layer['norm_sa'](x + layer['attn'](x, x, mask=mask))
                 x = layer['norm_mlp'](x + layer['mlp'](x))
+            if states is not None:
+                states.append(x)
 
-        return self.final_norm(x)
+        if output_hidden_states:
+            return self.final_norm(x), states[:-1]
+        else:
+            return self.final_norm(x)
 
 
 def LayerNorm(normalized_shape, eps=1e-5, elementwise_affine=True, export=False):
