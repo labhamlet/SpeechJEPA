@@ -63,9 +63,9 @@ class TorchtuneEncoder(nn.Module):
         B, S, E = x.shape
         states = None 
         if output_hidden_states:
-            states = []
-        # SDPA Mask: torchtune/SDPA wants True = Keep, False = Mask.
-        # JEPA/nn.Transformer wants True = Mask, False = Keep.
+            states =[]
+            states.append(x)
+
         mask = None
         if src_key_padding_mask is not None:
             valid_tokens = ~src_key_padding_mask 
@@ -83,7 +83,7 @@ class TorchtuneEncoder(nn.Module):
                 states.append(x)
 
         if output_hidden_states:
-            return self.final_norm(x), states[:-1]
+            return self.final_norm(x), tuple(states) 
         else:
             return self.final_norm(x)
 

@@ -137,7 +137,7 @@ def setup_callbacks(cfg):
         dirpath=f"{cfg.save_dir}/saved_models_speech_jepa_d2v2_like/{identity.replace('_', '/')}",
         filename="{step}",
         verbose=True,
-        every_n_train_steps=25000,
+        every_n_train_steps=10000,
         save_last=True,
         enable_version_counter=True,
         save_top_k=-1,

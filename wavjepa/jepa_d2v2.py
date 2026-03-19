@@ -166,8 +166,6 @@ class JEPA(pl.LightningModule):
 
         self.post_extraction_mapper : Optional[nn.Module] = nn.Linear(feature_extractor.embedding_dim, self.encoder_embedding_dim)
         self.local_feature_norms : nn.Module = nn.LayerNorm(self.encoder_embedding_dim)
-        self.encoder_pos_emb = NormalizedMaskedConvPositionalEmbedding(hidden_size=self.encoder_embedding_dim)
-
 
         self.mask_token = nn.Parameter(
             torch.zeros(1, 1, self.encoder_embedding_dim, requires_grad=True)
@@ -243,21 +241,30 @@ class JEPA(pl.LightningModule):
         self.decoder = torch.compile(self.decoder, **compile_kwargs)
         self.teacher_encoder = torch.compile(self.teacher_encoder, **compile_kwargs)
 
+
     def configure_optimizers(self):
-        trainables = [p for p in self.parameters() if p.requires_grad]
+        #Got it from Data2Vec2.0 https://github.com/facebookresearch/fairseq/blob/main/examples/data2vec/models/data2vec2.py
+        #Line 264
+        no_decay = [p for pn, p in self.named_parameters() 
+                    if p.requires_grad and (len(p.shape) == 1 or pn.endswith(".bias"))]
+        decay    = [p for pn, p in self.named_parameters() 
+                    if p.requires_grad and not (len(p.shape) == 1 or pn.endswith(".bias"))]
         optimizer = torch.optim.AdamW(
-            trainables,
+            [
+                {"params": decay,    "weight_decay": self.hparams.adam_weight_decay},
+                {"params": no_decay, "weight_decay": 0.0},
+            ],
             lr=self.hparams.lr,
             betas=self.hparams.adam_betas,
             eps=self.hparams.adam_eps,
-            weight_decay=self.hparams.adam_weight_decay,
         )
-        cosine_annealing = transformers.get_cosine_schedule_with_warmup(optimizer,
-                                 num_warmup_steps=self.warmup_steps, num_training_steps=self.trainer.max_steps)
-
+        cosine_annealing = transformers.get_cosine_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=self.warmup_steps,
+            num_training_steps=self.trainer.max_steps
+        )
         return {"optimizer": optimizer,
-                'lr_scheduler' : {"scheduler": cosine_annealing, "interval": "step"}}
-
+                "lr_scheduler": {"scheduler": cosine_annealing, "interval": "step"}}
     def _make_targets(self, layer_outputs: List[torch.Tensor], padding_mask: torch.Tensor):
         """
         Calculates Instance Norm ignoring padded tokens.
