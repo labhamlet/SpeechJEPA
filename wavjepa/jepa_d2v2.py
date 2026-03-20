@@ -155,7 +155,7 @@ class JEPA(pl.LightningModule):
         self.encoder = TorchtuneEncoder(
                 d_model = self.encoder_embedding_dim,
                 dim_feedforward = self.encoder_embedding_dim * 4,
-                norm_first = False,
+                norm_first = True,
                 nhead = self.n_encoder_heads,
                 num_layers = transformer_encoder_cfg["num_layers"],
                 use_rope = True,
@@ -243,28 +243,20 @@ class JEPA(pl.LightningModule):
 
 
     def configure_optimizers(self):
-        #Got it from Data2Vec2.0 https://github.com/facebookresearch/fairseq/blob/main/examples/data2vec/models/data2vec2.py
-        #Line 264
-        no_decay = [p for pn, p in self.named_parameters() 
-                    if p.requires_grad and (len(p.shape) == 1 or pn.endswith(".bias"))]
-        decay    = [p for pn, p in self.named_parameters() 
-                    if p.requires_grad and not (len(p.shape) == 1 or pn.endswith(".bias"))]
+        trainables = [p for p in self.parameters() if p.requires_grad]
         optimizer = torch.optim.AdamW(
-            [
-                {"params": decay,    "weight_decay": self.hparams.adam_weight_decay},
-                {"params": no_decay, "weight_decay": 0.0},
-            ],
+            trainables,
             lr=self.hparams.lr,
             betas=self.hparams.adam_betas,
             eps=self.hparams.adam_eps,
+            weight_decay=self.hparams.adam_weight_decay,
         )
-        cosine_annealing = transformers.get_cosine_schedule_with_warmup(
-            optimizer,
-            num_warmup_steps=self.warmup_steps,
-            num_training_steps=self.trainer.max_steps
-        )
+        cosine_annealing = transformers.get_cosine_schedule_with_warmup(optimizer,
+                                 num_warmup_steps=self.warmup_steps, num_training_steps=self.trainer.max_steps)
+
         return {"optimizer": optimizer,
-                "lr_scheduler": {"scheduler": cosine_annealing, "interval": "step"}}
+                'lr_scheduler' : {"scheduler": cosine_annealing, "interval": "step"}}
+
     def _make_targets(self, layer_outputs: List[torch.Tensor], padding_mask: torch.Tensor):
         """
         Calculates Instance Norm ignoring padded tokens.
