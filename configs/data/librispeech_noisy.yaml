@@ -8,9 +8,10 @@ sr : 16000
 in_channels: 1
 min_sample_len: 32000
 max_sample_len: 250000
-max_batch_size: 3200000
-target_batch_size: 3200000
-bucket_limits: True
+max_batch_size: 1600000
+target_batch_size: 1600000
+clean_data_ratio : 0.8
+bucket_limits: False
 loudness_normalize: True
 name : LibriSpeechNoisy
         

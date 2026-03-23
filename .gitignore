@@ -173,4 +173,6 @@ cython_debug/
 outputs/
 *.sh
 ARCH/
-ASR/
+ASR/LibriSpeech 
+ASR/librispeech_finetuning
+ASR/create_manifest.py 

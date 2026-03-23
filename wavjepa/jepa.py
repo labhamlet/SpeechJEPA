@@ -324,7 +324,6 @@ class JEPA(pl.LightningModule):
                 x = layer['norm_sa'](x + layer['attn'](x, x, mask=mask))
                 x = layer['norm_mlp'](x + layer['mlp'](x))
             else:
-                print("Teacher passing")
                 x = layer(x, src_key_padding_mask = padding_mask)
             
             if (
