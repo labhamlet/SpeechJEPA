@@ -138,7 +138,7 @@ if __name__ == "__main__":
     train_librilight(pretrained_jepa_model=model, 
                     train_data_root="librispeech_finetuning/1h", 
                     val_data_root="LibriSpeech/dev-other",
-                    test_data_root="LibriSpeech/test-other",
+                    test_data_root="LibriSpeech/test-clean",
                     use_decoder_for_asr=use_decoder_for_asr,
                     use_superb=use_superb,
                     manifest_dir="manifests")
