@@ -355,7 +355,6 @@ class SpeechJEPAForCTC(pl.LightningModule):
                 x, 
                 src_key_padding_mask=attention_mask,
             )
-            x = F.layer_norm(x, (x.shape[-1],)) 
         return self.lm_head(self.dropout(x))
 
 
