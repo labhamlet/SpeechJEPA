@@ -21,6 +21,18 @@ from wavjepa.types import TransformerEncoderCFG, TransformerLayerCFG
 from pytorch_lightning import seed_everything
 
 
+manifest_dir = "manifests"
+
+dev_other = os.path.join(manifest_dir, "dev_other.txt")
+dev_clean = os.path.join(manifest_dir, "dev_clean.txt")
+test_clean = os.path.join(manifest_dir, "test_clean.txt")
+test_other = os.path.join(manifest_dir, "test_other.txt")
+
+dev_other_dir = "LibriSpeech/dev-other",
+dev_clean_dir = "LibriSpeech/dev-clean",
+test_clean_dir = "LibriSpeech/test-clean",
+test_other_dir = "LibriSpeech/test-other", 
+
 
 torch.set_float32_matmul_precision('medium')
 seed_everything(42)
@@ -46,22 +58,27 @@ class CharTokenizer:
         return[self.id_to_char[t] for t in tokens]
     
 
-def train_librilight(pretrained_jepa_model, 
-                     manifest_dir,
+def train_librilight(pretrained_jepa_model,
+                     train, 
+                     train_dir,  
                      use_superb,
                      use_decoder_for_asr):
     
-    train = os.path.join(manifest_dir, "1h.txt")
-    dev_other = os.path.join(manifest_dir, "dev_other.txt")
-    test_clean = os.path.join(manifest_dir, "test_clean.txt")
-    test_other = os.path.join(manifest_dir, "test_other.txt")
 
+    train = os.path.join(manifest_dir, train)
     audio_token_func = partial(_get_feat_extract_output_lengths, cfg=conv_cfg)
+
     datamodule = LibriLightDataModule(
-        dev_other = dev_other, 
-        test_clean = test_clean, 
+        train = train,
+        train_dir = train_dir,
+        dev_other = dev_other,
+        dev_other_dir = dev_other_dir,
+        dev_clean = dev_clean,
+        dev_clean_dir = dev_clean_dir,
+        test_clean = test_clean,
+        test_clean_dir = test_clean_dir,
         test_other = test_other, 
-        train = train, 
+        test_other_dir = test_other_dir,
         tokenizer=CharTokenizer(),
         audio_token_func=audio_token_func,
         max_tokens=4_800_000, 
@@ -88,14 +105,18 @@ def train_librilight(pretrained_jepa_model,
         callbacks=[LearningRateMonitor(logging_interval="step")]
     )
 
-    trainer.fit(model, datamodule.dev_other_dataloader())
-    best_params = optimize_decoding_hyperparameters(model, datamodule.dev_other_dataloader())
-    model.beam_search_test = model._setup_torchaudio_decoder(
-        beam_size=50, 
-        lm_weight=best_params["alpha"], 
-        word_score=best_params["beta"]
-    )
-    trainer.test(model, dataloaders=[datamodule.test_clean_dataloader(), datamodule.test_other_dataloader()])
+    trainer.fit(model, train_dataloaders=datamodule.train_dataloader(),
+                val_dataloaders=datamodule.dev_other_dataloader())
+    
+    # best_params = optimize_decoding_hyperparameters(model, 
+    #                                                 datamodule.dev_other_dataloader())
+    
+    # model.beam_search_test = model._setup_torchaudio_decoder(
+    #     beam_size=50, 
+    #     lm_weight=best_params["alpha"], 
+    #     word_score=best_params["beta"]
+    # )
+    trainer.test(model, dataloaders=[datamodule.dev_clean_dataloader()])
 
     
 
@@ -142,9 +163,8 @@ if __name__ == "__main__":
     model.load_state_dict(new_state_dict, strict=False)
 
     train_librilight(pretrained_jepa_model=model, 
-                    train_data_root="librispeech_finetuning/1h", 
-                    val_data_root="LibriSpeech/dev-other",
-                    test_data_root="LibriSpeech/dev-other",
+                    train_dir="librispeech_finetuning/1h", 
+                    train= "1h.txt",
                     use_decoder_for_asr=use_decoder_for_asr,
                     use_superb=use_superb,
                     manifest_dir="manifests")

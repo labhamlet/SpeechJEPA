@@ -176,6 +176,8 @@ class LibriLightDataModule(pl.LightningDataModule):
         self,
         dev_other: str,
         dev_other_dir : str, 
+        dev_clean : str, 
+        dev_clean_dir : str, 
         test_clean: str,
         test_clean_dir : str, 
         test_other : str,
@@ -189,11 +191,13 @@ class LibriLightDataModule(pl.LightningDataModule):
     ):
         super().__init__()
         self.dev_other = dev_other
+        self.dev_clean = dev_clean
         self.test_other = test_clean
         self.test_clean = test_other
         self.train = train 
 
         self.dev_other_dir = dev_other_dir
+        self.dev_clean_dir = dev_clean_dir 
         self.test_other_dir = test_clean_dir
         self.test_clean_dir = test_other_dir
         self.train_dir = train_dir
@@ -202,8 +206,7 @@ class LibriLightDataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.collate_fn = CTCCollateFn(tokenizer, audio_token_func)
 
-
-    def setup(self, stage=None):
+    def train_dataloader(self):
         self.train_dataset =  StreamingLibriLightDataset(
             root_dir=self.train_dir, 
             manifest_path=self.train,
@@ -211,28 +214,6 @@ class LibriLightDataModule(pl.LightningDataModule):
             infinite=True
         )
 
-        self.dev_other_dataset = StreamingLibriLightDataset(
-            root_dir=self.dev_other_dir, 
-            manifest_path=self.dev_other,
-            max_tokens=self.max_tokens,
-            infinite=False
-        )
-        
-        self.test_clean_dataset = StreamingLibriLightDataset(
-            root_dir=self.test_clean_dir, 
-            manifest_path=self.test_clean,
-            max_tokens=self.max_tokens,
-            infinite=False
-        )
-
-        self.test_other_dataset = StreamingLibriLightDataset(
-            root_dir=self.test_other_dir, 
-            manifest_path=self.test_other,
-            max_tokens=self.max_tokens,
-            infinite=False
-        )
-
-    def train_dataloader(self):
         return DataLoader(
             self.train_dataset,
             batch_size=None,     
@@ -243,7 +224,33 @@ class LibriLightDataModule(pl.LightningDataModule):
             pin_memory=True, 
         )
 
+    def dev_clean_dataloader(self):
+        self.dev_clean_dataset = StreamingLibriLightDataset(
+            root_dir=self.dev_clean_dir, 
+            manifest_path=self.dev_clean,
+            max_tokens=self.max_tokens,
+            infinite=False
+        )
+
+        return DataLoader(
+            self.dev_clean_dataset,
+            batch_size=None,     
+            shuffle=False,       
+            collate_fn=self.collate_fn,
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            pin_memory=True, 
+        )
+
+
     def dev_other_dataloader(self):
+        self.dev_other_dataset = StreamingLibriLightDataset(
+            root_dir=self.dev_other_dir, 
+            manifest_path=self.dev_other,
+            max_tokens=self.max_tokens,
+            infinite=False
+        )
+
         return DataLoader(
             self.dev_other_dataset,
             batch_size=None,     
@@ -255,7 +262,13 @@ class LibriLightDataModule(pl.LightningDataModule):
         )
 
 
-    def test_clean_dataloader(self):
+    def test_clean_dataloader(self): 
+        self.test_clean_dataset = StreamingLibriLightDataset(
+            root_dir=self.test_clean_dir, 
+            manifest_path=self.test_clean,
+            max_tokens=self.max_tokens,
+            infinite=False
+        )
         return DataLoader(
             self.test_clean_dataset,
             batch_size=None,     
@@ -267,6 +280,14 @@ class LibriLightDataModule(pl.LightningDataModule):
         )
 
     def test_other_dataloader(self):
+
+        self.test_other_dataset = StreamingLibriLightDataset(
+            root_dir=self.test_other_dir, 
+            manifest_path=self.test_other,
+            max_tokens=self.max_tokens,
+            infinite=False
+        )
+
         return DataLoader(
             self.test_other_dataset,
             batch_size=None,     

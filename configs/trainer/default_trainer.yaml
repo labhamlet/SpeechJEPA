@@ -10,5 +10,3 @@ compile_modules: False
 num_gpus : 1
 size : base
 average_top_k_layers : 8
-use_rope : True 
-use_conv_pos : True 
