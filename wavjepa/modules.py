@@ -14,6 +14,9 @@ class TorchtuneEncoder(nn.Module):
                  nhead: int,
                  num_layers: int, 
                  use_rope : bool,
+                 attn_dropout = 0.0,
+                 activation_dropout = 0.0,
+                 hidden_dropout=0.0,
                  max_seq_len=8192):
         
         super().__init__()
@@ -23,7 +26,7 @@ class TorchtuneEncoder(nn.Module):
         
         head_dim = self.d_model // nhead
         rope = RotaryPositionalEmbeddings(dim=head_dim, max_seq_len=max_seq_len)
-
+        self.dropout = nn.Dropout(hidden_dropout)
         self.layers = nn.ModuleList()
         for _ in range(num_layers):
             attn = MultiHeadAttention(
@@ -36,15 +39,15 @@ class TorchtuneEncoder(nn.Module):
                 v_proj=nn.Linear(self.d_model, self.d_model, bias=True),
                 output_proj=nn.Linear(self.d_model, self.d_model, bias=True),
                 pos_embeddings=rope if use_rope else None,
-                attn_dropout=0.0
+                attn_dropout=attn_dropout
             )
             
             mlp = nn.Sequential(
                 nn.Linear(self.d_model, dim_feedforward, bias=True),
                 nn.GELU(),
-                nn.Dropout(0.0),
+                nn.Dropout(activation_dropout),
                 nn.Linear(dim_feedforward, self.d_model, bias=True),
-                nn.Dropout(0.0)
+                nn.Dropout(activation_dropout)
             )
             
             norm_sa = nn.LayerNorm(self.d_model, eps=1e-6)
@@ -74,10 +77,13 @@ class TorchtuneEncoder(nn.Module):
         for layer in self.layers:
             if self.norm_first:
                 normed_x = layer['norm_sa'](x)
-                x = x + layer['attn'](normed_x, normed_x, mask=mask)
+                attn_out = layer['attn'](normed_x, normed_x, mask=mask)
+                x = x + self.dropout(attn_out)
                 x = x + layer['mlp'](layer['norm_mlp'](x))
             else: 
-                x = layer['norm_sa'](x + layer['attn'](x, x, mask=mask))
+                attn_out = layer['attn'](x, x, mask=mask)
+                attn_out = self.dropout(attn_out)
+                x = layer['norm_sa'](x + attn_out)
                 x = layer['norm_mlp'](x + layer['mlp'](x))
             if states is not None:
                 states.append(x)

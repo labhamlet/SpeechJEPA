@@ -11,19 +11,22 @@ def optimize_decoding_hyperparameters(model, dev_dataloader, device="cuda"):
     cached_lengths = []
     cached_targets =[]
     
-    # 1. Run forward pass ONCE
     with torch.no_grad():
         for batch in dev_dataloader:
-            audio = batch["audio"].to(device)
-            padding_mask = batch["padding_mask"].to(device)
+            audio, padding_mask, attention_mask= (
+                batch["audio"], batch["padding_mask"], batch["attention_mask"]
+            )
             
-            # Get logits
-            logits = model(audio, padding_mask)
+            audio = audio.to(device)
+            padding_mask = padding_mask.to(device) 
+            attention_mask = attention_mask.to(device) 
+            
+            logits = model(audio, attention_mask, padding_mask)
             emissions = torch.nn.functional.log_softmax(logits, dim=-1).cpu().contiguous()
             
             # Get lengths
             raw_audio_lengths = padding_mask.sum(dim=-1)
-            feat_lengths = model.model._get_feat_extract_output_lengths(raw_audio_lengths)
+            feat_lengths = model._get_feat_extract_output_lengths(raw_audio_lengths)
             
             cached_emissions.append(emissions)
             cached_lengths.append(feat_lengths.cpu().to(torch.int32))
@@ -56,12 +59,10 @@ def optimize_decoding_hyperparameters(model, dev_dataloader, device="cuda"):
             preds =[" ".join(res[0].words).strip().upper() for res in beam_results]
             all_preds.extend(preds)
             
-        # Return the Objective metric (WER) as a float
         return wer_metric(all_preds, cached_targets).item()
 
     print("Running Ax Bayesian Optimization")
     
-    # Let Ax run 30-50 trials to find the global minimum WER
     best_parameters, values, experiment, ax_model = optimize(
         parameters=[
             {"name": "alpha", "type": "range", "bounds": [0.0, 5.0]}, # LM Weight
@@ -69,8 +70,8 @@ def optimize_decoding_hyperparameters(model, dev_dataloader, device="cuda"):
         ],
         evaluation_function=evaluate_trial,
         objective_name="wer",
-        minimize=True,   # We want to minimize WER
-        total_trials=30  # 30 is usually plenty for a 2D space
+        minimize=True,
+        total_trials=30 
     )
     
     print(f"Optimization Complete! Best params: {best_parameters}")

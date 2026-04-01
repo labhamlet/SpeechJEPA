@@ -192,14 +192,14 @@ class LibriLightDataModule(pl.LightningDataModule):
         super().__init__()
         self.dev_other = dev_other
         self.dev_clean = dev_clean
-        self.test_other = test_clean
-        self.test_clean = test_other
+        self.test_other = test_other
+        self.test_clean = test_clean
         self.train = train 
 
         self.dev_other_dir = dev_other_dir
         self.dev_clean_dir = dev_clean_dir 
-        self.test_other_dir = test_clean_dir
-        self.test_clean_dir = test_other_dir
+        self.test_other_dir = test_other_dir
+        self.test_clean_dir = test_clean_dir
         self.train_dir = train_dir
 
         self.max_tokens = max_tokens
@@ -217,7 +217,7 @@ class LibriLightDataModule(pl.LightningDataModule):
         return DataLoader(
             self.train_dataset,
             batch_size=None,     
-            shuffle=True,       
+            shuffle=False,       
             collate_fn=self.collate_fn,
             num_workers=self.num_workers,
             persistent_workers=True,
