@@ -149,12 +149,13 @@ class SpeechJEPAForCTC(pl.LightningModule):
         lr: float = 1e-4,    
         total_steps: int = 80000,
         freeze_encoder_updates: int = 10000, 
-        mask_time_prob: float = 0.075,
+        mask_time_prob: float = 0.065,
         mask_time_length: int = 10,
         mask_time_min_masks : int = 2,
         mask_feature_prob: float = 0.004,
         mask_feature_length: int = 64,
         mask_feature_min_masks : int = 0,
+        dropout : float = 0.1,
         downsampling_factor: int = 320, 
         use_kernel_dropout_encoder : bool = False,
         use_kernel_dropout_decoder : bool = False,
@@ -176,6 +177,7 @@ class SpeechJEPAForCTC(pl.LightningModule):
             print("Warning: '-' not found in labels! Defaulting pad_token_id to 0.")
             self.pad_token_id = 0        
         
+        self.model = pretrained_jepa
         self.extract_audio = pretrained_jepa.extract_audio
         self.audio_feature_norms = pretrained_jepa.audio_feature_norms
         self.post_extraction_mapper = pretrained_jepa.post_extraction_mapper
@@ -207,9 +209,11 @@ class SpeechJEPAForCTC(pl.LightningModule):
         self.mask_feature_length = mask_feature_length  
         self.mask_feature_min_masks = mask_feature_min_masks
 
-        
-        #Layer dropout as seen in Wav2Vec2.0
-        self.dropout = nn.Dropout(0.05)
+
+        #Wav2Vec2.0 drops futures right before the transformer
+        self.hidden_dropout = nn.Dropout(0.1)
+        #CTC Dropout
+        self.dropout = nn.Dropout(dropout)
         self.lm_head = nn.Linear(pretrained_jepa.encoder_embedding_dim, len(self.labels))
         
         if self.mask_time_prob > 0.0 or self.mask_feature_prob > 0.0:
@@ -238,20 +242,13 @@ class SpeechJEPAForCTC(pl.LightningModule):
                 self.decoder.requires_grad_(False)
                 self.decoder.eval()
 
-        self.beam_search_dev = None
-        self.beam_search_test = None
+        self.decoder_files = download_pretrained_files("librispeech-4-gram")
+        self.beam_search_dev = self._setup_torchaudio_decoder(beam_size=50, lm_weight=2.0, word_score=-1.0)
+        self.beam_search_test = self._setup_torchaudio_decoder(beam_size=50)
         if self.use_superb:
             self.layer_weights = nn.Parameter(
                 torch.ones(pretrained_jepa.encoder.num_layers + 1)  # +1 for embedding layer
             )
-
-    def prepare_data(self):
-        download_pretrained_files("librispeech-4-gram")
-
-    def setup(self, stage=None):
-        self.decoder_files = download_pretrained_files("librispeech-4-gram")
-        self.beam_search_dev = self._setup_torchaudio_decoder(beam_size=50, lm_weight=2.0, word_score=-1.0)
-        self.beam_search_test = self._setup_torchaudio_decoder(beam_size=50)
 
     def on_train_batch_start(self, batch, batch_idx):
         self.extract_audio.eval()  # Always frozen, always eval
@@ -337,7 +334,8 @@ class SpeechJEPAForCTC(pl.LightningModule):
         x = self.post_extraction_mapper(x)
         x = self.local_feature_norms(x)
         x = self._mask_hidden_states(x, attention_mask=~attention_mask)
-        
+        x = self.hidden_dropout(x)
+
         if self.use_superb:
             x, hidden_states = self.encoder(
                 x, 
@@ -355,7 +353,6 @@ class SpeechJEPAForCTC(pl.LightningModule):
                 x, 
                 src_key_padding_mask=attention_mask,
             )
-            x = F.layer_norm(x, (x.shape[-1],)) 
         return self.lm_head(self.dropout(x))
 
 
@@ -423,36 +420,37 @@ class SpeechJEPAForCTC(pl.LightningModule):
         )
         
         logits = self(audio, attention_mask, padding_mask)
-        emissions = nn.functional.log_softmax(logits, dim=-1, dtype=torch.float32).cpu().contiguous()
+        # emissions = nn.functional.log_softmax(logits, dim=-1, dtype=torch.float32).cpu().contiguous()
         
         raw_audio_lengths = padding_mask.sum(dim=-1)
         feat_lengths = self._get_feat_extract_output_lengths(raw_audio_lengths)
             
-        lengths_int32 = feat_lengths.cpu().to(torch.int32)
-        beam_results = self.beam_search_dev(emissions, lengths_int32)
-        predictions_lm = [" ".join(res[0].words).strip().upper() for res in beam_results]
+        # lengths_int32 = feat_lengths.cpu().to(torch.int32)
+        # beam_results = self.beam_search_dev(emissions, lengths_int32)
+        # predictions_lm = [" ".join(res[0].words).strip().upper() for res in beam_results]
         
         lengths_long = feat_lengths.cpu().to(torch.long)
         predictions_greedy = self._greedy_decode(logits.detach().cpu(), lengths_long)
         
         if batch_idx == 0:
             print(f"\nTargets:             {text_targets[:2]}")
-            print(f"Predictions (LM):    {predictions_lm[:2]}")
+            # print(f"Predictions (LM):    {predictions_lm[:2]}")
             print(f"Predictions (No LM): {predictions_greedy[:2]}")
             
-        self.val_wer_metric.update(predictions_lm, text_targets)
+        # self.val_wer_metric.update(predictions_lm, text_targets)
         self.val_wer_metric_greedy.update(predictions_greedy, text_targets)
 
     def on_validation_epoch_end(self):
-        val_wer_lm = self.val_wer_metric.compute()
+        # val_wer_lm = self.val_wer_metric.compute()
         val_wer_greedy = self.val_wer_metric_greedy.compute()
         
-        self.log("val/wer_4gram", val_wer_lm, sync_dist=True)
+        # self.log("val/wer_4gram", val_wer_lm, sync_dist=True)
         self.log("val/wer_greedy", val_wer_greedy, sync_dist=True)
         
-        self.print(f"\n---> [Step {self.global_step}] Validation WER | 4-gram LM: {val_wer_lm * 100:.2f}% | Greedy: {val_wer_greedy * 100:.2f}% <---")
-        
-        self.val_wer_metric.reset()
+        # self.print(f"\n---> [Step {self.global_step}] Validation WER | 4-gram LM: {val_wer_lm * 100:.2f}% | Greedy: {val_wer_greedy * 100:.2f}% <---")
+        self.print(f"\n---> [Step {self.global_step}] Validation WER | Greedy: {val_wer_greedy * 100:.2f}% <---")
+
+        # self.val_wer_metric.reset()
         self.val_wer_metric_greedy.reset()
 
     def test_step(self, batch, batch_idx):
@@ -461,40 +459,43 @@ class SpeechJEPAForCTC(pl.LightningModule):
         )
         
         logits = self(audio, attention_mask, padding_mask)
-        emissions = nn.functional.log_softmax(logits, dim=-1, dtype=torch.float32).cpu().contiguous()
+        # emissions = nn.functional.log_softmax(logits, dim=-1, dtype=torch.float32).cpu().contiguous()
         
         raw_audio_lengths = padding_mask.sum(dim=-1)
         feat_lengths = self._get_feat_extract_output_lengths(raw_audio_lengths)
             
-        lengths_int32 = feat_lengths.cpu().to(torch.int32)
-        beam_results = self.beam_search_test(emissions, lengths_int32)
-        predictions_lm = [" ".join(res[0].words).strip().upper() for res in beam_results]
+        # lengths_int32 = feat_lengths.cpu().to(torch.int32)
+        # beam_results = self.beam_search_test(emissions, lengths_int32)
+        # predictions_lm = [" ".join(res[0].words).strip().upper() for res in beam_results]
 
         lengths_long = feat_lengths.cpu().to(torch.long)
         predictions_greedy = self._greedy_decode(logits.detach().cpu(), lengths_long)
         
         if batch_idx == 0:
             print(f"\nTargets:             {text_targets[:2]}")
-            print(f"Predictions (LM):    {predictions_lm[:2]}")
+            # print(f"Predictions (LM):    {predictions_lm[:2]}")
             print(f"Predictions (No LM): {predictions_greedy[:2]}")
             
-        self.test_wer_metric.update(predictions_lm, text_targets)
+        # self.test_wer_metric.update(predictions_lm, text_targets)
         self.test_wer_metric_greedy.update(predictions_greedy, text_targets)
 
     def on_test_epoch_end(self):
-        test_wer_lm = self.test_wer_metric.compute()
+        # test_wer_lm = self.test_wer_metric.compute()
         test_wer_greedy = self.test_wer_metric_greedy.compute()
         
-        self.log("test/wer_4gram", test_wer_lm, sync_dist=True)
+        # self.log("test/wer_4gram", test_wer_lm, sync_dist=True)
         self.log("test/wer_greedy", test_wer_greedy, sync_dist=True)
         
-        self.print(f"\nFinal Test WER | 4-gram LM: {test_wer_lm * 100:.2f}% | Greedy (No LM): {test_wer_greedy * 100:.2f}%")
-        
+        # self.print(f"\nFinal Test WER | 4-gram LM: {test_wer_lm * 100:.2f}% | Greedy (No LM): {test_wer_greedy * 100:.2f}%")
+        self.print(f"\n---> [Step {self.global_step}] Test WER | Greedy: {test_wer_greedy * 100:.2f}% <---")
+
         self.test_wer_metric.reset()
         self.test_wer_metric_greedy.reset()
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.lr)
+        optimizer = torch.optim.Adam(self.parameters(), 
+                                     betas= (0.9,0.98),
+                                     lr=self.hparams.lr)
         scheduler = get_tri_state_schedule(optimizer, total_steps=self.hparams.total_steps)
         return {
             "optimizer": optimizer,

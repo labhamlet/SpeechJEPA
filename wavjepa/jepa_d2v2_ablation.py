@@ -5,13 +5,11 @@ import torchaudio
 from typing import List, Any, Optional
 
 import torch
-from torch import dist 
-
-
 from torch import nn
 from einops import repeat, rearrange
 import torch.nn.functional as F
 import pytorch_lightning as pl
+
 from wavjepa.functions import trunc_normal_
 from wavjepa.extractors.audio_extractor import Extractor
 from wavjepa.types import ForwardReturn, TransformerLayerCFG, TransformerEncoderCFG
@@ -161,11 +159,7 @@ class JEPA(pl.LightningModule):
                 nhead = self.n_encoder_heads,
                 num_layers = transformer_encoder_cfg["num_layers"],
                 use_rope = True,
-                max_seq_len=8192,
-                attn_dropout = kwargs.get("attn_dropout", 0.0),
-                activation_dropout = kwargs.get("activation_dropout", 0.0),
-                hidden_dropout= kwargs.get("hidden_dropout", 0.0),
-                layer_drop= kwargs.get("layer_drop", 0.0)
+                max_seq_len=8192
                 )
 
         self.decoder = Decoder1d(D2vDecoderConfig, input_dim=self.encoder_embedding_dim)
@@ -247,29 +241,22 @@ class JEPA(pl.LightningModule):
         self.decoder = torch.compile(self.decoder, **compile_kwargs)
         self.teacher_encoder = torch.compile(self.teacher_encoder, **compile_kwargs)
 
+
     def configure_optimizers(self):
-        #Got it from Data2Vec2.0 https://github.com/facebookresearch/fairseq/blob/main/examples/data2vec/models/data2vec2.py
-        #Line 264
-        no_decay = [p for pn, p in self.named_parameters() 
-                    if p.requires_grad and (len(p.shape) == 1 or pn.endswith(".bias"))]
-        decay    = [p for pn, p in self.named_parameters() 
-                    if p.requires_grad and not (len(p.shape) == 1 or pn.endswith(".bias"))]
+        trainables = [p for p in self.parameters() if p.requires_grad]
         optimizer = torch.optim.AdamW(
-            [
-                {"params": decay,    "weight_decay": self.hparams.adam_weight_decay},
-                {"params": no_decay, "weight_decay": 0.0},
-            ],
+            trainables,
             lr=self.hparams.lr,
             betas=self.hparams.adam_betas,
             eps=self.hparams.adam_eps,
+            weight_decay=self.hparams.adam_weight_decay,
         )
-        cosine_annealing = transformers.get_cosine_schedule_with_warmup(
-            optimizer,
-            num_warmup_steps=self.warmup_steps,
-            num_training_steps=self.trainer.max_steps
-        )
+        cosine_annealing = transformers.get_cosine_schedule_with_warmup(optimizer,
+                                 num_warmup_steps=self.warmup_steps, num_training_steps=self.trainer.max_steps)
+
         return {"optimizer": optimizer,
-                "lr_scheduler": {"scheduler": cosine_annealing, "interval": "step"}}
+                'lr_scheduler' : {"scheduler": cosine_annealing, "interval": "step"}}
+    
     def _make_targets(self, layer_outputs: List[torch.Tensor], padding_mask: torch.Tensor):
         """
         Calculates Instance Norm ignoring padded tokens.
@@ -393,12 +380,10 @@ class JEPA(pl.LightningModule):
         student_input, teacher_input, ctx_masks, target_indices, ctx_and_target_masks, teacher_padding_mask = batch
         out = self(student_input, teacher_input, ctx_masks, target_indices, ctx_and_target_masks, teacher_padding_mask)
 
-        target_variance = self.compute_var(out["targets"])
-
+        # Enhanced logging
         log_data = {
-            "train/loss": out["loss"],
+            "train/loss": out['loss'],
             "ema" : self._get_ema_decay(),
-            "train/target_variance": target_variance
         }
             
         self.log_dict(log_data, prog_bar=True, sync_dist=True)
@@ -432,6 +417,7 @@ class JEPA(pl.LightningModule):
         local_features = self.audio_feature_norms(local_features)
         local_features = self.post_extraction_mapper(local_features)
         local_features = self.local_feature_norms(local_features)
+        
         return local_features
 
 
@@ -463,6 +449,8 @@ class JEPA(pl.LightningModule):
         
 
         loss = self.masked_loss(preds, targets, target_indices)
+        
+
         return ForwardReturn(
             local_features=local_features,
             contextual_features=contextual_features,
@@ -504,23 +492,6 @@ class JEPA(pl.LightningModule):
 
         return contextual_features
 
-    @staticmethod
-    def compute_var(y):
-        y = y.view(-1, y.size(-1))
-        if dist.is_initialized():
-            # Use y.device to prevent cross-device DDP crashes!
-            zc = torch.tensor(y.size(0), device=y.device, dtype=y.dtype)
-            zs = y.sum(dim=0)
-            zss = (y ** 2).sum(dim=0)
-
-            dist.all_reduce(zc)
-            dist.all_reduce(zs)
-            dist.all_reduce(zss)
-
-            var = zss / (zc - 1) - (zs ** 2) / (zc * (zc - 1))
-            return torch.sqrt(var + 1e-6).mean()
-        else:
-            return torch.sqrt(y.var(dim=0) + 1e-6).mean()
     @torch.inference_mode()
     def get_audio_representation(self, audio : torch.Tensor, attention_padding_mask : torch.tensor = None):
         local_features = self._extract_audio(audio)
