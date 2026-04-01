@@ -50,7 +50,6 @@ class TorchtuneEncoder(nn.Module):
                 nn.GELU(),
                 nn.Dropout(activation_dropout),
                 nn.Linear(dim_feedforward, self.d_model, bias=True),
-                nn.Dropout(activation_dropout)
             )
             
             norm_sa = nn.LayerNorm(self.d_model, eps=1e-6)
@@ -85,12 +84,15 @@ class TorchtuneEncoder(nn.Module):
                 normed_x = layer['norm_sa'](x)
                 attn_out = layer['attn'](normed_x, normed_x, mask=mask)
                 x = x + self.dropout(attn_out)
-                x = x + layer['mlp'](layer['norm_mlp'](x))
+                mlp_out = layer['mlp'](layer['norm_mlp'](x))
+                x = x + self.dropout(mlp_out)
             else: 
                 attn_out = layer['attn'](x, x, mask=mask)
                 attn_out = self.dropout(attn_out)
                 x = layer['norm_sa'](x + attn_out)
-                x = layer['norm_mlp'](x + layer['mlp'](x))
+                mlp_out = layer['mlp'](x)
+                mlp_out = self.dropout(mlp_out)
+                x = layer['norm_mlp'](x + mlp_out)
             if states is not None:
                 states.append(x)
 

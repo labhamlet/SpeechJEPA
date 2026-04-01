@@ -250,7 +250,6 @@ class SpeechJEPAForCTC(pl.LightningModule):
                 torch.ones(pretrained_jepa.encoder.num_layers + 1)  # +1 for embedding layer
             )
 
-
     def on_train_batch_start(self, batch, batch_idx):
         self.extract_audio.eval()  # Always frozen, always eval
         if self.global_step < self.hparams.freeze_encoder_updates:
