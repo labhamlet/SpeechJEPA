@@ -164,7 +164,8 @@ class JEPA(pl.LightningModule):
                 max_seq_len=8192,
                 attn_dropout = kwargs.get("attn_dropout", 0.0),
                 activation_dropout = kwargs.get("activation_dropout", 0.0),
-                hidden_dropout= kwargs.get("hidden_dropout", 0.0)
+                hidden_dropout= kwargs.get("hidden_dropout", 0.0),
+                layer_drop= kwargs.get("layer_drop", 0.0)
                 )
 
         self.decoder = Decoder1d(D2vDecoderConfig, input_dim=self.encoder_embedding_dim)

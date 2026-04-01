@@ -6,6 +6,8 @@ from torchtune.modules import (
 )
 from dataclasses import dataclass
 import torch.nn.functional as F
+import random 
+
 
 class TorchtuneEncoder(nn.Module):
     def __init__(self, d_model: int,
@@ -17,6 +19,7 @@ class TorchtuneEncoder(nn.Module):
                  attn_dropout = 0.0,
                  activation_dropout = 0.0,
                  hidden_dropout=0.0,
+                 layer_drop = 0.0,
                  max_seq_len=8192):
         
         super().__init__()
@@ -61,6 +64,7 @@ class TorchtuneEncoder(nn.Module):
             }))
 
         self.final_norm = nn.LayerNorm(self.d_model, eps=1e-6) if self.norm_first else nn.Identity()
+        self.layer_drop = layer_drop
 
     def forward(self, x, src_key_padding_mask=None, output_hidden_states=False):
         B, S, E = x.shape
@@ -75,6 +79,8 @@ class TorchtuneEncoder(nn.Module):
             mask = valid_tokens.view(B, 1, S).expand(B, S, S)
 
         for layer in self.layers:
+            if self.training and random.random() < self.layer_drop:
+                continue 
             if self.norm_first:
                 normed_x = layer['norm_sa'](x)
                 attn_out = layer['attn'](normed_x, normed_x, mask=mask)

@@ -155,7 +155,7 @@ class SpeechJEPAForCTC(pl.LightningModule):
         mask_feature_prob: float = 0.004,
         mask_feature_length: int = 64,
         mask_feature_min_masks : int = 0,
-        layer_drop : float = 0.05,
+        dropout : float = 0.1,
         downsampling_factor: int = 320, 
         use_kernel_dropout_encoder : bool = False,
         use_kernel_dropout_decoder : bool = False,
@@ -209,7 +209,11 @@ class SpeechJEPAForCTC(pl.LightningModule):
         self.mask_feature_length = mask_feature_length  
         self.mask_feature_min_masks = mask_feature_min_masks
 
-        self.dropout = nn.Dropout(layer_drop)
+
+        #Wav2Vec2.0 drops futures right before the transformer
+        self.hidden_dropout = nn.Dropout(0.1)
+        #CTC Dropout
+        self.dropout = nn.Dropout(dropout)
         self.lm_head = nn.Linear(pretrained_jepa.encoder_embedding_dim, len(self.labels))
         
         if self.mask_time_prob > 0.0 or self.mask_feature_prob > 0.0:
@@ -331,7 +335,8 @@ class SpeechJEPAForCTC(pl.LightningModule):
         x = self.post_extraction_mapper(x)
         x = self.local_feature_norms(x)
         x = self._mask_hidden_states(x, attention_mask=~attention_mask)
-        
+        x = self.hidden_dropout(x)
+
         if self.use_superb:
             x, hidden_states = self.encoder(
                 x, 
