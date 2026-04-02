@@ -149,71 +149,21 @@ def train_librilight(
         val_dataloaders=datamodule.dev_other_dataloader(),
     )
  
-    best_checkpoints = checkpoint_callback.best_k_models
-    ranked = sorted(best_checkpoints.items(), key=lambda x: x[1])
- 
     all_splits = {
         "dev_other":  datamodule.dev_other_dataloader(),
         "dev_clean":  datamodule.dev_clean_dataloader(),
         "test_clean": datamodule.test_clean_dataloader(),
         "test_other": datamodule.test_other_dataloader(),
     }
- 
-    results: dict[str, dict[str, float]] = {}
- 
-    for rank, (ckpt_path, val_wer) in enumerate(ranked, start=1):
-        print(f"\n{'='*60}")
-        print(f"  Evaluating top-{rank} checkpoint  (val/wer_greedy={val_wer:.4f})")
-        print(f"  {ckpt_path}")
-        print(f"{'='*60}")
- 
-        ckpt_model = SpeechJEPAForCTC.load_from_checkpoint(
-            ckpt_path,
-            bundle=bundle,
-            pretrained_jepa=pretrained_jepa_model,
-            audio_token_func=audio_token_func,
-            with_decoder=use_decoder_for_asr,
-            lr=cfg.lr,
-            total_steps=cfg.steps,
-            freeze_encoder_updates=cfg.freeze_encoder_updates,
-            use_superb=use_superb,
-            mask_time_prob=cfg.mask_time_prob,
-            mask_feature_prob=cfg.mask_feature_prob,
-        )
- 
-        ckpt_results: dict[str, float] = {"val_wer_greedy": val_wer.item()}
-        for split_name, split_loader in all_splits.items():
-            split_out = trainer.test(ckpt_model, dataloaders=[split_loader])
-            ckpt_results[split_name] = split_out[0]["test/wer_greedy"]
- 
-        results[f"top_{rank}"] = {"checkpoint": ckpt_path, **ckpt_results}
- 
-    header = (
-        f"{'Rank':<6} {'val_wer':>8} {'dev_other':>10} "
-        f"{'dev_clean':>10} {'test_other':>11} {'test_clean':>11}"
-    )
-    print(header)
-    print("-" * len(header))
-    for rank, (tag, r) in enumerate(results.items(), start=1):
-        print(
-            f"{rank:<6} "
-            f"{r['val_wer_greedy'] * 100:>7.2f}% "
-            f"{r['dev_other'] * 100:>9.2f}% "
-            f"{r['dev_clean'] * 100:>9.2f}% "
-            f"{r['test_other'] * 100:>10.2f}% "
-            f"{r['test_clean'] * 100:>10.2f}%"
-        )
- 
-    # Best checkpoint WER returned to Ax as the optimisation objective
-    best_ckpt_path, best_val_wer = ranked[0]
-    print(f"\nBest checkpoint : {best_ckpt_path}  (val/wer_greedy={best_val_wer:.4f})")
- 
-    return best_val_wer.item()
+
+    for split_name, split_loader in all_splits.items():
+        print(split_name)
+        trainer.test(model, dataloaders=[split_loader])
 
 
 def load_model(cfg):
     weights = torch.load(
-        cfg.model_path,
+        cfg.model_dir,
         weights_only=False,
         map_location=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
     )
@@ -230,7 +180,7 @@ def load_model(cfg):
                 transformer_encoder_layers_cfg=TransformerLayerCFG.create(),
                 resample_sr=16000,
                 size="base",
-                layer_drop = cfg.layer_drop,
+                layer_drop = cfg.layerdrop,
                 attn_dropout=cfg.attn_dropout, 
                 activation_dropout=cfg.activation_dropout,
                 hidden_dropout=cfg.hidden_dropout

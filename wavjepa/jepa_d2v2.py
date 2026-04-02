@@ -124,10 +124,11 @@ class JEPA(pl.LightningModule):
         compile_modules : bool = False,
         size : str = "base",
         clean_audio_ratio : float = 0.0,
-        **kwargs : dict[str, Any],
+        *args,
+        **kwargs,
     ):
         
-        super().__init__(**kwargs)
+        super().__init__()
         self.sr = resample_sr 
         self.original_sr = original_sr
         self.ema_end_step = ema_anneal_end_step
@@ -165,7 +166,7 @@ class JEPA(pl.LightningModule):
                 attn_dropout = kwargs.get("attn_dropout", 0.0),
                 activation_dropout = kwargs.get("activation_dropout", 0.0),
                 hidden_dropout= kwargs.get("hidden_dropout", 0.0),
-                layer_drop= kwargs.get("layer_drop", 0.0)
+                layer_drop=kwargs.get("layer_drop", 0.0)
                 )
 
         self.decoder = Decoder1d(D2vDecoderConfig, input_dim=self.encoder_embedding_dim)

@@ -23,6 +23,12 @@ class TorchtuneEncoder(nn.Module):
                  max_seq_len=8192):
         
         super().__init__()
+
+        print(f"Attention Dropout: {attn_dropout}")
+        print(f"Activation Dropout: {activation_dropout}")
+        print(f"Hidden Dropout: {hidden_dropout}")
+        print(f"Layer Drop: {layer_drop}")
+        
         self.d_model = d_model
         self.num_layers = num_layers
         self.norm_first = norm_first
@@ -50,6 +56,7 @@ class TorchtuneEncoder(nn.Module):
                 nn.GELU(),
                 nn.Dropout(activation_dropout),
                 nn.Linear(dim_feedforward, self.d_model, bias=True),
+                nn.Dropout(hidden_dropout)
             )
             
             norm_sa = nn.LayerNorm(self.d_model, eps=1e-6)
@@ -86,13 +93,14 @@ class TorchtuneEncoder(nn.Module):
                 x = x + self.dropout(attn_out)
                 mlp_out = layer['mlp'](layer['norm_mlp'](x))
                 x = x + self.dropout(mlp_out)
-            else: 
-                attn_out = layer['attn'](x, x, mask=mask)
-                attn_out = self.dropout(attn_out)
-                x = layer['norm_sa'](x + attn_out)
-                mlp_out = layer['mlp'](x)
-                mlp_out = self.dropout(mlp_out)
-                x = layer['norm_mlp'](x + mlp_out)
+            else:
+                attn_residual = x 
+                hidden_states = layer['attn'](x, x, mask=mask)
+                attn_out = self.dropout(hidden_states)
+                hidden_states = attn_residual + attn_out
+                hidden_states = layer['norm_sa'](hidden_states)
+                hidden_states = hidden_states + layer['mlp'](hidden_states)
+                x = layer['norm_mlp'](hidden_states)
             if states is not None:
                 states.append(x)
 

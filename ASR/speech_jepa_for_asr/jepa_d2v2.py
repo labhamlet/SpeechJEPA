@@ -402,7 +402,7 @@ class SpeechJEPAForCTC(pl.LightningModule):
                     target_lengths,
                     blank=self.pad_token_id,
                     reduction="mean", 
-                    zero_infinity=False 
+                    zero_infinity=True 
                 )
 
             with torch.no_grad():
