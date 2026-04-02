@@ -12,7 +12,7 @@ from utils import get_identity_from_cfg
 from data_modules import SSLDataModule, NoisySSLDataModule
 
 from wavjepa.jepa_quantized import JEPAQuantized
-from wavjepa.jepa_d2v2 import JEPA
+from wavjepa.jepa_d2v2_ablation import JEPA
 
 from wavjepa.masking import SpeechMasker
 from wavjepa.extractors import ConvFeatureExtractor, Extractor
@@ -115,6 +115,8 @@ class ComponentFactory:
                 average_top_k_layers = cfg.trainer.average_top_k_layers,
                 warmup_steps=cfg.trainer.warmup_steps,
                 size = cfg.trainer.get("size", "base"),
+                use_rope = cfg.trainer.use_rope, 
+                use_conv_pos = cfg.trainer.use_conv_pos
             )
         except Exception as e:
             raise RuntimeError(f"Failed to create network instance: {str(e)}")
@@ -137,7 +139,7 @@ def setup_callbacks(cfg):
         dirpath=f"{cfg.save_dir}/saved_models_speech_jepa_d2v2_like/{identity.replace('_', '/')}",
         filename="{step}",
         verbose=True,
-        every_n_train_steps=10000,
+        every_n_train_steps=5000,
         save_last=True,
         enable_version_counter=True,
         save_top_k=-1,
