@@ -164,31 +164,16 @@ class JEPA(pl.LightningModule):
                 layer_drop= kwargs.get("layer_drop", 0.0)
                 )
 
+        self.decoder = Decoder1d(D2vDecoderConfig, input_dim=self.encoder_embedding_dim)
 
-        # After the decoder definition:
-        self.decoder_dim = self.encoder_embedding_dim // 2
-        self.encoder_to_decoder = nn.Linear(self.encoder_embedding_dim, self.decoder_dim, bias=False)
-        self.decoder_to_target = nn.Linear(self.decoder_dim, self.encoder_embedding_dim)
-
-        # Fix mask_token to match decoder dim:
-        self.mask_token = nn.Parameter(
-            torch.zeros(1, 1, self.decoder_dim, requires_grad=True)
-        )
-        torch.nn.init.normal_(self.mask_token, std=0.02)
-        # self.decoder = Decoder1d(D2vDecoderConfig, input_dim=self.encoder_embedding_dim)
-        self.decoder = TorchtuneEncoder(
-                d_model=self.decoder_dim,
-                dim_feedforward=self.decoder_dim * 4,
-                norm_first=False,
-                nhead=self.n_encoder_heads,
-                num_layers=4,  # shallower than encoder
-                use_rope=True,
-                max_seq_len=8192,
-            )
-        
         self.post_extraction_mapper : Optional[nn.Module] = nn.Linear(feature_extractor.embedding_dim, self.encoder_embedding_dim)
         self.local_feature_norms : nn.Module = nn.LayerNorm(self.encoder_embedding_dim)
 
+        self.mask_token = nn.Parameter(
+            torch.zeros(1, 1, self.encoder_embedding_dim, requires_grad=True)
+        )
+        torch.nn.init.normal_(self.mask_token, std=0.02)
+ 
         for name, module in self.named_children():
             if name == 'decoder':
                 module.apply(self._decoder_init_weights)
@@ -351,7 +336,7 @@ class JEPA(pl.LightningModule):
         if clean_scene.ndim != 3:
             clean_scene = clean_scene.unsqueeze(1)
 
-        assert clean_scene.shape[1] == 1, f"Generated scene has more channels than in channels"
+        assert clean_scene.shape[1] == 1, f"Generated scene has more channels than in channels, {generated_scene.shape}, 1"
         assert clean_scene.ndim == 3
 
         if self.sr != self.original_sr:
@@ -472,14 +457,11 @@ class JEPA(pl.LightningModule):
                         src_key_padding_mask=None):
         B, seq_len, E = contextual_features.shape
 
-        # Project encoder output to decoder dimension
-        contextual_features = self.encoder_to_decoder(contextual_features)  # (B, T, D/2)
-
-        # Start from all mask tokens (now decoder-sized)
-        tgt = self.mask_token.expand(B, seq_len, -1)           # (B, T, D/2)
+        # Start from all mask tokens
+        tgt = self.mask_token.expand(B, seq_len, E)                # (B, T, E)
 
         # Blend context in via masking
-        ctx_mask_f = (~ctx_mask).unsqueeze(-1).to(contextual_features.dtype)
+        ctx_mask_f = (~ctx_mask).unsqueeze(-1).to(contextual_features.dtype)  # (B, T, 1)
         tgt = tgt * ctx_mask.unsqueeze(-1).to(tgt.dtype) + contextual_features * ctx_mask_f
         
         tgt = repeat(tgt, 'B S E -> (B N) S E', N=nr_targets)
@@ -487,12 +469,9 @@ class JEPA(pl.LightningModule):
         src_key_padding_mask = rearrange(src_key_padding_mask, 'B N S -> (B N) S')
         padding_mask = repeat(padding_mask, 'B S -> (B N) S', N=nr_targets)
         is_context_or_tgt = (~src_key_padding_mask) & (~padding_mask)  
-        tgt = self.decoder(tgt, src_key_padding_mask=~is_context_or_tgt)
-
-        # Project back to encoder dim to match targets
-        tgt = self.decoder_to_target(tgt)                      # ((B*N), T, E)
+        tgt = self.decoder(tgt, is_context_or_tgt)
         return tgt
-
+    
     def encoder_forward(self, 
     x_contexts: torch.Tensor, 
     src_key_padding_mask : torch.BoolTensor | None = None

@@ -17,6 +17,9 @@ from speech_jepa.jepa import JEPA
 from speech_jepa.masking import SpeechMasker
 from speech_jepa.extractors import ConvFeatureExtractor, Extractor
 from speech_jepa.types import TransformerEncoderCFG, TransformerLayerCFG
+import torch.nn as nn
+
+# Map lowercase names to activation constructors
 
 # Component registries
 NETWORKS = {"JEPA": JEPA}
@@ -33,6 +36,19 @@ ENCODERS = {
         "EncoderCFG": TransformerEncoderCFG,
     }
 }
+
+_ACTIVATION_MAP = {
+    "gelu": nn.GELU,
+    "relu": nn.ReLU,
+    "silu": nn.SiLU,
+    "tanh": nn.Tanh,
+}
+
+# Register a resolver that evaluates "${resolve_activation:gelu}"
+OmegaConf.register_new_resolver(
+    "resolve_activation",
+    lambda name: _ACTIVATION_MAP[name.lower()]()   # instantiate the module
+)
 
 torch.set_float32_matmul_precision("medium")
 torch.backends.cudnn.benchmark = False
@@ -94,8 +110,8 @@ class ComponentFactory:
         try:
             return network_class(
                 feature_extractor=extractor,
-                transformer_encoder_cfg = TransformerEncoderCFG.create(), 
-                transformer_encoder_layers_cfg = TransformerLayerCFG.create(),
+                transformer_encoder_layers_cfg = TransformerLayerCFG.create(**cfg.encoder.transformer_encoder_layers_cfg),
+                transformer_encoder_cfg = TransformerEncoderCFG.create(**cfg.encoder.transformer_encoder_cfg),
                 lr=cfg.optimizer.lr,
                 ema_decay=cfg.trainer.ema_decay,
                 ema_end_decay=cfg.trainer.ema_end_decay,

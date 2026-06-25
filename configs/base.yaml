@@ -5,6 +5,7 @@ defaults:
   - extractor : wav2vec2
   - masker : LibriSpeech
   - decoder : TransformerDecoder
+  - encoder : TransformerBase
 
 model: JEPA
 save_dir: /projects/0/prjs1261
