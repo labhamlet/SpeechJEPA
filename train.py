@@ -96,8 +96,6 @@ class ComponentFactory:
                 feature_extractor=extractor,
                 transformer_encoder_cfg = TransformerEncoderCFG.create(), 
                 transformer_encoder_layers_cfg = TransformerLayerCFG.create(),
-                # transformer_decoder_cfg = TransformerEncoderCFG.create(num_layers=cfg.decoder.nr_layers), 
-                # transformer_decoder_layers_cfg = TransformerLayerCFG.create(d_model=cfg.decoder.embedding_dim),
                 lr=cfg.optimizer.lr,
                 ema_decay=cfg.trainer.ema_decay,
                 ema_end_decay=cfg.trainer.ema_end_decay,
@@ -110,10 +108,6 @@ class ComponentFactory:
                 average_top_k_layers = cfg.trainer.average_top_k_layers,
                 warmup_steps=cfg.trainer.warmup_steps,
                 size = cfg.trainer.get("size", "base"),
-                # use_kernel_dropout_encoder = cfg.trainer.get("use_kernel_dropout_encoder", True),
-                # use_kernel_dropout_decoder = cfg.trainer.get("use_kernel_dropout_decoder", True),
-                # use_encoder_rope = cfg.trainer.get("use_rope_encoder", True),
-                # use_decoder_rope = cfg.trainer.get("use_rope_decoder", True),
             )
         except Exception as e:
             raise RuntimeError(f"Failed to create network instance: {str(e)}")

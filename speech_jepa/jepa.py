@@ -174,6 +174,7 @@ class JEPA(pl.LightningModule):
         self.mask_token = nn.Parameter(
             torch.zeros(1, 1, self.decoder_dim, requires_grad=True)
         )
+        torch.nn.init.normal_(self.mask_token, std=0.02)
         # self.decoder = Decoder1d(D2vDecoderConfig, input_dim=self.encoder_embedding_dim)
         self.decoder = TorchtuneEncoder(
                 d_model=self.decoder_dim,
@@ -188,11 +189,6 @@ class JEPA(pl.LightningModule):
         self.post_extraction_mapper : Optional[nn.Module] = nn.Linear(feature_extractor.embedding_dim, self.encoder_embedding_dim)
         self.local_feature_norms : nn.Module = nn.LayerNorm(self.encoder_embedding_dim)
 
-        self.mask_token = nn.Parameter(
-            torch.zeros(1, 1, self.encoder_embedding_dim, requires_grad=True)
-        )
-        torch.nn.init.normal_(self.mask_token, std=0.02)
- 
         for name, module in self.named_children():
             if name == 'decoder':
                 module.apply(self._decoder_init_weights)
@@ -355,7 +351,7 @@ class JEPA(pl.LightningModule):
         if clean_scene.ndim != 3:
             clean_scene = clean_scene.unsqueeze(1)
 
-        assert clean_scene.shape[1] == 1, f"Generated scene has more channels than in channels, {generated_scene.shape}, 1"
+        assert clean_scene.shape[1] == 1, f"Generated scene has more channels than in channels"
         assert clean_scene.ndim == 3
 
         if self.sr != self.original_sr:
