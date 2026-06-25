@@ -4,23 +4,23 @@ import hydra
 import pytorch_lightning as pl
 import torch
 from pytorch_lightning import seed_everything
-from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, RichProgressBar
-from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.strategies import DDPStrategy
 
+from omegaconf import OmegaConf
 from utils import get_identity_from_cfg
-from data_modules import SSLDataModule, NoisySSLDataModule
+from data_modules import SSLDataModule
 
-from wavjepa.jepa_quantized import JEPAQuantized
-from wavjepa.jepa import JEPA
+from speech_jepa.jepa import JEPA
 
-from wavjepa.masking import SpeechMasker
-from wavjepa.extractors import ConvFeatureExtractor, Extractor
-from wavjepa.types import TransformerEncoderCFG, TransformerLayerCFG
+from speech_jepa.masking import SpeechMasker
+from speech_jepa.extractors import ConvFeatureExtractor, Extractor
+from speech_jepa.types import TransformerEncoderCFG, TransformerLayerCFG
 
 # Component registries
-NETWORKS = {"JEPA": JEPA,
-            "JEPAQuantized": JEPAQuantized}
+NETWORKS = {"JEPA": JEPA}
+
 MASKERS = {
     "speech-masker": SpeechMasker
 }
@@ -35,13 +35,6 @@ ENCODERS = {
 }
 
 torch.set_float32_matmul_precision("medium")
-torch.backends.cuda.matmul.allow_tf32 = True
-torch.backends.cudnn.allow_tf32 = True
-torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
-
-# Disable cuDNN benchmarking because we do not have consistent input sizes.
-# Enable torch.compile with dynamic shapes later!
-# Also check the convolutional positonal encodings.
 torch.backends.cudnn.benchmark = False
 
 
@@ -103,8 +96,8 @@ class ComponentFactory:
                 feature_extractor=extractor,
                 transformer_encoder_cfg = TransformerEncoderCFG.create(), 
                 transformer_encoder_layers_cfg = TransformerLayerCFG.create(),
-                transformer_decoder_cfg = TransformerEncoderCFG.create(num_layers=cfg.decoder.nr_layers), 
-                transformer_decoder_layers_cfg = TransformerLayerCFG.create(d_model=cfg.decoder.embedding_dim),
+                # transformer_decoder_cfg = TransformerEncoderCFG.create(num_layers=cfg.decoder.nr_layers), 
+                # transformer_decoder_layers_cfg = TransformerLayerCFG.create(d_model=cfg.decoder.embedding_dim),
                 lr=cfg.optimizer.lr,
                 ema_decay=cfg.trainer.ema_decay,
                 ema_end_decay=cfg.trainer.ema_end_decay,
@@ -117,22 +110,29 @@ class ComponentFactory:
                 average_top_k_layers = cfg.trainer.average_top_k_layers,
                 warmup_steps=cfg.trainer.warmup_steps,
                 size = cfg.trainer.get("size", "base"),
-                use_kernel_dropout_encoder = cfg.trainer.get("use_kernel_dropout_encoder", True),
-                use_kernel_dropout_decoder = cfg.trainer.get("use_kernel_dropout_decoder", True),
-                use_encoder_rope = cfg.trainer.get("use_rope_encoder", True),
-                use_decoder_rope = cfg.trainer.get("use_rope_decoder", True),
+                # use_kernel_dropout_encoder = cfg.trainer.get("use_kernel_dropout_encoder", True),
+                # use_kernel_dropout_decoder = cfg.trainer.get("use_kernel_dropout_decoder", True),
+                # use_encoder_rope = cfg.trainer.get("use_rope_encoder", True),
+                # use_decoder_rope = cfg.trainer.get("use_rope_decoder", True),
             )
         except Exception as e:
             raise RuntimeError(f"Failed to create network instance: {str(e)}")
 
 
-def setup_logger(cfg) -> TensorBoardLogger:
+def setup_logger(cfg) -> WandbLogger:
     """Set up TensorBoard logger with proper configuration."""
     identity = get_identity_from_cfg(cfg)
-    return TensorBoardLogger(
-        f"{cfg.save_dir}/tb_logs_speech_jepa_asr",
-        name=identity.replace("_", "/"),
+    config_dict = OmegaConf.to_container(cfg, resolve=True)
+    
+    wandb_logger = WandbLogger(
+        project="Speech-JEPA",          # You can change the project name here
+        name=identity,                     # Name the run based on your identity config
+        save_dir=cfg.save_dir,
+        config=config_dict,                # Log all hydra configs automatically
+        log_model=False,                  # We handle checkpoints via ModelCheckpoint
+        save_code=True,  # This uploads your script and git diff to WandB
     )
+    return wandb_logger
 
 
 def setup_callbacks(cfg):
@@ -140,10 +140,10 @@ def setup_callbacks(cfg):
     identity = get_identity_from_cfg(cfg)
     
     checkpoint_callback = ModelCheckpoint(
-        dirpath=f"{cfg.save_dir}/saved_models_speech_jepa_asr_repr_again/{identity.replace('_', '/')}",
+        dirpath=f"{cfg.save_dir}/speech_jepa/{identity.replace('_', '/')}",
         filename="{step}",
         verbose=True,
-        every_n_train_steps=5000,
+        every_n_train_steps=10000,
         save_last=True,
         enable_version_counter=True,
         save_top_k=-1,
@@ -181,41 +181,20 @@ def create_data_module(cfg) -> pl.LightningDataModule:
     """Create and configure the data module."""
     factory = ComponentFactory()
     masker = factory.create_masker(cfg)
-
-    if "Noisy" in cfg.data.name:
-        return NoisySSLDataModule(
-            data_dir = cfg.data.data_dir,
-            masker = masker, 
-            noise_path = cfg.data.noise_path,
-            rir_path = cfg.data.rir_path,
-            noise_and_rir_sr = cfg.data.original_sr,
-            data_sr=cfg.data.sr,
-            min_sample_len = cfg.data.min_sample_len,
-            max_sample_len = cfg.data.max_sample_len,
-            target_batch_size = cfg.data.target_batch_size, 
-            max_batch_size = cfg.data.max_batch_size,
-            loudness_normalize = cfg.data.loudness_normalize,
-            target_masks_per_context = cfg.masker.target_masks_per_context,
-            conv_kernel = eval(cfg.extractor.conv_kernel),
-            conv_stride = eval(cfg.extractor.conv_stride),
-            bucket_limits = cfg.data.bucket_limits,
-            pin_memory = True,
-        )
-    else:
-        return SSLDataModule(
-            data_dir = cfg.data.data_dir,
-            masker = masker, 
-            min_sample_len = cfg.data.min_sample_len,
-            max_sample_len = cfg.data.max_sample_len,
-            target_batch_size = cfg.data.target_batch_size, 
-            max_batch_size = cfg.data.max_batch_size,
-            loudness_normalize = cfg.data.loudness_normalize,
-            conv_kernel = eval(cfg.extractor.conv_kernel),
-            conv_stride = eval(cfg.extractor.conv_stride),
-            target_masks_per_context = cfg.masker.target_masks_per_context,
-            bucket_limits = cfg.data.bucket_limits,
-            pin_memory = True,
-        )
+    return SSLDataModule(
+        data_dir = cfg.data.data_dir,
+        masker = masker, 
+        min_sample_len = cfg.data.min_sample_len,
+        max_sample_len = cfg.data.max_sample_len,
+        target_batch_size = cfg.data.target_batch_size, 
+        max_batch_size = cfg.data.max_batch_size,
+        loudness_normalize = cfg.data.loudness_normalize,
+        conv_kernel = eval(cfg.extractor.conv_kernel),
+        conv_stride = eval(cfg.extractor.conv_stride),
+        target_masks_per_context = cfg.masker.target_masks_per_context,
+        bucket_limits = cfg.data.bucket_limits,
+        pin_memory = True,
+    )
 
 def build_model(cfg) -> torch.nn.Module:
     """Build the complete model with all components."""

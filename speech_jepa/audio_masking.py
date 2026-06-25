@@ -18,8 +18,8 @@ def compute_mask_indices(
     seed: Optional[int] = None,
     epoch: Optional[int] = None,
     indices: Optional[torch.Tensor] = None,
-    idc_select_ver: int = 1,  # 2 to reproduce mask_tokens_dataset
-    num_mask_ver: int = 2,  # 2 to reproduce mask_tokens_dataset
+    idc_select_ver: int = 1, 
+    num_mask_ver: int = 2, 
 ):
     """
     Computes random mask spans for a given shape

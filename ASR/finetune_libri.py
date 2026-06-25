@@ -2,8 +2,8 @@ from .data_modules.libri import LibriSpeechDataModule
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import LearningRateMonitor
 from SpeechJEPA.wavjepa.jepa_asr import JEPA 
-from wavjepa.extractors import ConvFeatureExtractor 
-from wavjepa.types import TransformerEncoderCFG, TransformerLayerCFG
+from speech_jepa.extractors import ConvFeatureExtractor 
+from speech_jepa.types import TransformerEncoderCFG, TransformerLayerCFG
 
 from speech_jepa_for_asr.jepa import SpeechJEPAForCTC
 import torch 

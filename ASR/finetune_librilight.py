@@ -11,10 +11,10 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 import sys 
 sys.path.append("/home/gyuksel3/phd/SpeechJEPA")
 
-from wavjepa.jepa import JEPA
+from speech_jepa.jepa import JEPA
 
-from wavjepa.extractors import ConvFeatureExtractor 
-from wavjepa.types import TransformerEncoderCFG, TransformerLayerCFG
+from speech_jepa.extractors import ConvFeatureExtractor 
+from speech_jepa.types import TransformerEncoderCFG, TransformerLayerCFG
 
 from pytorch_lightning import seed_everything
 

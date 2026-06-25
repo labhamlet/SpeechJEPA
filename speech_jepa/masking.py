@@ -2,7 +2,7 @@ from torch import nn
 from einops import repeat, rearrange
 import torch
 
-from wavjepa.audio_masking import compute_mask_indices
+from speech_jepa.audio_masking import compute_mask_indices
 
 class TimeInverseBlockMasker(nn.Module):
     """

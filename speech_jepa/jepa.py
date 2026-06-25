@@ -5,18 +5,18 @@ import torchaudio
 from typing import List, Any, Optional
 
 import torch
+import torch.distributed as dist
+
+
 from torch import nn
 from einops import repeat, rearrange
 import torch.nn.functional as F
 import pytorch_lightning as pl
+from speech_jepa.functions import trunc_normal_
+from speech_jepa.extractors.audio_extractor import Extractor
+from speech_jepa.types import ForwardReturn, TransformerLayerCFG, TransformerEncoderCFG
 
-from wavjepa.functions import trunc_normal_
-from wavjepa.extractors.audio_extractor import Extractor
-from wavjepa.types import ForwardReturn, TransformerLayerCFG, TransformerEncoderCFG
-from data_modules.scene_module import generate_scenes_batch
-
-from wavjepa.pos_embed import Wav2Vec2PositionalConvEmbedding, NormalizedMaskedConvPositionalEmbedding
-from wavjepa.modules import TorchtuneEncoder, Decoder1d, D2vDecoderConfig
+from speech_jepa.modules import TorchtuneEncoder, Decoder1d, D2vDecoderConfig
 
 
 def collate_fn(batch : List[torch.Tensor]) -> torch.Tensor:
@@ -121,7 +121,6 @@ class JEPA(pl.LightningModule):
         use_gradient_checkpointing: bool = False,
         compile_modules : bool = False,
         size : str = "base",
-        clean_audio_ratio : float = 0.0,
         **kwargs : dict[str, Any],
     ):
         
@@ -138,7 +137,6 @@ class JEPA(pl.LightningModule):
         self.audio_feature_norms : nn.Module = nn.LayerNorm(self.extract_audio.embedding_dim)
 
         self.loss_fn = loss_fn
-        self.clean_audio_ratio = clean_audio_ratio
         self.warmup_steps=warmup_steps
 
         # If size is large, then alter the encoder parameters to mimic VIT-Large. Should results in ~300m parameters.
@@ -159,11 +157,34 @@ class JEPA(pl.LightningModule):
                 nhead = self.n_encoder_heads,
                 num_layers = transformer_encoder_cfg["num_layers"],
                 use_rope = True,
-                max_seq_len=8192
+                max_seq_len=8192,
+                attn_dropout = kwargs.get("attn_dropout", 0.0),
+                activation_dropout = kwargs.get("activation_dropout", 0.0),
+                hidden_dropout= kwargs.get("hidden_dropout", 0.0),
+                layer_drop= kwargs.get("layer_drop", 0.0)
                 )
 
-        self.decoder = Decoder1d(D2vDecoderConfig, input_dim=self.encoder_embedding_dim)
 
+        # After the decoder definition:
+        self.decoder_dim = self.encoder_embedding_dim // 2
+        self.encoder_to_decoder = nn.Linear(self.encoder_embedding_dim, self.decoder_dim, bias=False)
+        self.decoder_to_target = nn.Linear(self.decoder_dim, self.encoder_embedding_dim)
+
+        # Fix mask_token to match decoder dim:
+        self.mask_token = nn.Parameter(
+            torch.zeros(1, 1, self.decoder_dim, requires_grad=True)
+        )
+        # self.decoder = Decoder1d(D2vDecoderConfig, input_dim=self.encoder_embedding_dim)
+        self.decoder = TorchtuneEncoder(
+                d_model=self.decoder_dim,
+                dim_feedforward=self.decoder_dim * 4,
+                norm_first=False,
+                nhead=self.n_encoder_heads,
+                num_layers=4,  # shallower than encoder
+                use_rope=True,
+                max_seq_len=8192,
+            )
+        
         self.post_extraction_mapper : Optional[nn.Module] = nn.Linear(feature_extractor.embedding_dim, self.encoder_embedding_dim)
         self.local_feature_norms : nn.Module = nn.LayerNorm(self.encoder_embedding_dim)
 
@@ -241,22 +262,29 @@ class JEPA(pl.LightningModule):
         self.decoder = torch.compile(self.decoder, **compile_kwargs)
         self.teacher_encoder = torch.compile(self.teacher_encoder, **compile_kwargs)
 
-
     def configure_optimizers(self):
-        trainables = [p for p in self.parameters() if p.requires_grad]
+        #Got it from Data2Vec2.0 https://github.com/facebookresearch/fairseq/blob/main/examples/data2vec/models/data2vec2.py
+        #Line 264
+        no_decay = [p for pn, p in self.named_parameters() 
+                    if p.requires_grad and (len(p.shape) == 1 or pn.endswith(".bias"))]
+        decay    = [p for pn, p in self.named_parameters() 
+                    if p.requires_grad and not (len(p.shape) == 1 or pn.endswith(".bias"))]
         optimizer = torch.optim.AdamW(
-            trainables,
+            [
+                {"params": decay,    "weight_decay": self.hparams.adam_weight_decay},
+                {"params": no_decay, "weight_decay": 0.0},
+            ],
             lr=self.hparams.lr,
             betas=self.hparams.adam_betas,
             eps=self.hparams.adam_eps,
-            weight_decay=self.hparams.adam_weight_decay,
         )
-        cosine_annealing = transformers.get_cosine_schedule_with_warmup(optimizer,
-                                 num_warmup_steps=self.warmup_steps, num_training_steps=self.trainer.max_steps)
-
+        cosine_annealing = transformers.get_cosine_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=self.warmup_steps,
+            num_training_steps=self.trainer.max_steps
+        )
         return {"optimizer": optimizer,
-                'lr_scheduler' : {"scheduler": cosine_annealing, "interval": "step"}}
-    
+                "lr_scheduler": {"scheduler": cosine_annealing, "interval": "step"}}
     def _make_targets(self, layer_outputs: List[torch.Tensor], padding_mask: torch.Tensor):
         """
         Calculates Instance Norm ignoring padded tokens.
@@ -323,30 +351,16 @@ class JEPA(pl.LightningModule):
 
         # Initialize clean_scene unconditionally
         clean_scene = batch["audio"]
-        generated_scene = generate_scenes_batch.generate_scene(
-            source=batch["audio"], 
-            noise=batch.get("noise", [None]),
-            real_noise_length=batch.get("noise_length", None) ,
-            noise_start_idx=batch.get("noise_start_idx", None),
-            source_rir=batch.get("source_rir", [None]),
-            noise_rirs=batch.get("noise_rirs", [None]),
-            snr=batch.get("snr", None)
-        )
         # Add channel dimension to the final audio as well.
         if clean_scene.ndim != 3:
             clean_scene = clean_scene.unsqueeze(1)
-        if generated_scene.ndim != 3:
-            generated_scene = generated_scene.unsqueeze(1)
-        
-        assert generated_scene.ndim == clean_scene.ndim
-        assert generated_scene.shape[1] == 1, f"Generated scene has more channels than in channels, {generated_scene.shape}, 1"
+
         assert clean_scene.shape[1] == 1, f"Generated scene has more channels than in channels, {generated_scene.shape}, 1"
         assert clean_scene.ndim == 3
 
         if self.sr != self.original_sr:
-            generated_scene = resample(generated_scene, resample_sr=self.sr, original_sr=self.original_sr)
             clean_scene = resample(clean_scene, resample_sr=self.sr, original_sr=self.original_sr)
-            new_length = generated_scene.shape[-1]
+            new_length = clean_scene.shape[-1]
             #This is for the audio representations.
             #Teacher padding mask is already calculated over the 16khz.
             padding_mask_old = batch["padding_mask"]            
@@ -358,14 +372,11 @@ class JEPA(pl.LightningModule):
 
         #This padding mask has True for real audio and False for padding.
         clean_scene = masked_instance_normalize(clean_scene, batch["padding_mask"])
-        generated_scene = masked_instance_normalize(generated_scene, batch["padding_mask"])
 
         # Cast to bfloat16 and flatten batch and samples dimensions
         clean_scene = clean_scene.to(torch.bfloat16)
-        generated_scene = generated_scene.to(torch.bfloat16)
 
-        return (generated_scene, 
-                clean_scene, 
+        return (clean_scene,
                 batch["ctx_mask"], 
                 batch["tgt_mask"],
                 batch["ctx_tgt_mask"],
@@ -377,13 +388,15 @@ class JEPA(pl.LightningModule):
             self._step_teacher()
         
     def training_step(self, batch: torch.Tensor, batch_idx: int) -> ForwardReturn:
-        student_input, teacher_input, ctx_masks, target_indices, ctx_and_target_masks, teacher_padding_mask = batch
-        out = self(student_input, teacher_input, ctx_masks, target_indices, ctx_and_target_masks, teacher_padding_mask)
+        audio, ctx_masks, target_indices, ctx_and_target_masks, teacher_padding_mask = batch
+        out = self(audio, ctx_masks, target_indices, ctx_and_target_masks, teacher_padding_mask)
 
-        # Enhanced logging
+        target_variance = self.compute_var(out["targets"])
+
         log_data = {
-            "train/loss": out['loss'],
+            "train/loss": out["loss"],
             "ema" : self._get_ema_decay(),
+            "train/target_variance": target_variance
         }
             
         self.log_dict(log_data, prog_bar=True, sync_dist=True)
@@ -417,27 +430,25 @@ class JEPA(pl.LightningModule):
         local_features = self.audio_feature_norms(local_features)
         local_features = self.post_extraction_mapper(local_features)
         local_features = self.local_feature_norms(local_features)
-        
         return local_features
 
 
     def forward(self, 
-                student_input : torch.Tensor, 
-                teacher_input : torch.Tensor, 
+                audio : torch.Tensor, 
                 ctx_masks, 
                 target_indices, 
                 ctx_and_target_masks,
                 teacher_padding_masks) -> ForwardReturn:
         
         # Teacher: Only has padding (no masked targets)
-        teacher_features = self._extract_audio(teacher_input)
+        teacher_features = self._extract_audio(audio)
         teacher_features = teacher_features.detach()
         #Teacher only ignores the padding tokens
         targets = self._forward_teacher(teacher_features, 
                                         padding_mask=teacher_padding_masks)
         
         # Student: Has both targets (ctx_masks) AND padding
-        local_features = self._extract_audio(student_input)
+        local_features = self._extract_audio(audio)
         #Here student ignroes the padding tokens + non context tokens                                     
         contextual_features = self.encoder_forward(local_features, src_key_padding_mask=ctx_masks)
         #Here decoder ignores the padding tokens + non target tokens.
@@ -449,8 +460,6 @@ class JEPA(pl.LightningModule):
         
 
         loss = self.masked_loss(preds, targets, target_indices)
-        
-
         return ForwardReturn(
             local_features=local_features,
             contextual_features=contextual_features,
@@ -467,11 +476,14 @@ class JEPA(pl.LightningModule):
                         src_key_padding_mask=None):
         B, seq_len, E = contextual_features.shape
 
-        # Start from all mask tokens
-        tgt = self.mask_token.expand(B, seq_len, E)                # (B, T, E)
+        # Project encoder output to decoder dimension
+        contextual_features = self.encoder_to_decoder(contextual_features)  # (B, T, D/2)
+
+        # Start from all mask tokens (now decoder-sized)
+        tgt = self.mask_token.expand(B, seq_len, -1)           # (B, T, D/2)
 
         # Blend context in via masking
-        ctx_mask_f = (~ctx_mask).unsqueeze(-1).to(contextual_features.dtype)  # (B, T, 1)
+        ctx_mask_f = (~ctx_mask).unsqueeze(-1).to(contextual_features.dtype)
         tgt = tgt * ctx_mask.unsqueeze(-1).to(tgt.dtype) + contextual_features * ctx_mask_f
         
         tgt = repeat(tgt, 'B S E -> (B N) S E', N=nr_targets)
@@ -479,9 +491,12 @@ class JEPA(pl.LightningModule):
         src_key_padding_mask = rearrange(src_key_padding_mask, 'B N S -> (B N) S')
         padding_mask = repeat(padding_mask, 'B S -> (B N) S', N=nr_targets)
         is_context_or_tgt = (~src_key_padding_mask) & (~padding_mask)  
-        tgt = self.decoder(tgt, is_context_or_tgt)
+        tgt = self.decoder(tgt, src_key_padding_mask=~is_context_or_tgt)
+
+        # Project back to encoder dim to match targets
+        tgt = self.decoder_to_target(tgt)                      # ((B*N), T, E)
         return tgt
-    
+
     def encoder_forward(self, 
     x_contexts: torch.Tensor, 
     src_key_padding_mask : torch.BoolTensor | None = None
@@ -492,6 +507,23 @@ class JEPA(pl.LightningModule):
 
         return contextual_features
 
+    @staticmethod
+    def compute_var(y):
+        y = y.view(-1, y.size(-1))
+        if dist.is_initialized():
+            # Use y.device to prevent cross-device DDP crashes!
+            zc = torch.tensor(y.size(0), device=y.device, dtype=y.dtype)
+            zs = y.sum(dim=0)
+            zss = (y ** 2).sum(dim=0)
+
+            dist.all_reduce(zc)
+            dist.all_reduce(zs)
+            dist.all_reduce(zss)
+
+            var = zss / (zc - 1) - (zs ** 2) / (zc * (zc - 1))
+            return torch.sqrt(var + 1e-6).mean()
+        else:
+            return torch.sqrt(y.var(dim=0) + 1e-6).mean()
     @torch.inference_mode()
     def get_audio_representation(self, audio : torch.Tensor, attention_padding_mask : torch.tensor = None):
         local_features = self._extract_audio(audio)
