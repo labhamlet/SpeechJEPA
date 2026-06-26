@@ -124,7 +124,7 @@ class JEPA(pl.LightningModule):
         **kwargs : dict[str, Any],
     ):
         
-        super().__init__(**kwargs)
+        super().__init__()
         self.sr = resample_sr 
         self.original_sr = original_sr
         self.ema_end_step = ema_anneal_end_step
@@ -336,7 +336,7 @@ class JEPA(pl.LightningModule):
         if clean_scene.ndim != 3:
             clean_scene = clean_scene.unsqueeze(1)
 
-        assert clean_scene.shape[1] == 1, f"Generated scene has more channels than in channels, {generated_scene.shape}, 1"
+        assert clean_scene.shape[1] == 1, f"Generated scene has more channels than in channels, 1"
         assert clean_scene.ndim == 3
 
         if self.sr != self.original_sr:
@@ -373,15 +373,16 @@ class JEPA(pl.LightningModule):
         out = self(audio, ctx_masks, target_indices, ctx_and_target_masks, teacher_padding_mask)
 
         target_variance = self.compute_var(out["targets"])
+        pred_variance = self.compute_var(out["preds"])
 
         log_data = {
             "train/loss": out["loss"],
-            "ema" : self._get_ema_decay(),
-            "train/target_variance": target_variance
+            "ema": self._get_ema_decay(),
+            "train/target_variance": target_variance,
+            "train/pred_variance": pred_variance,
         }
-            
-        self.log_dict(log_data, prog_bar=True, sync_dist=True)
 
+        self.log_dict(log_data, prog_bar=True, sync_dist=True)
         return out
     
     def masked_loss(self, pred, target, target_indices):
@@ -499,6 +500,7 @@ class JEPA(pl.LightningModule):
             return torch.sqrt(var + 1e-6).mean()
         else:
             return torch.sqrt(y.var(dim=0) + 1e-6).mean()
+
     @torch.inference_mode()
     def get_audio_representation(self, audio : torch.Tensor, attention_padding_mask : torch.tensor = None):
         local_features = self._extract_audio(audio)

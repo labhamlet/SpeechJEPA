@@ -3,7 +3,7 @@ defaults:
   - optimizer: adamW
   - trainer: default_trainer
   - extractor : wav2vec2
-  - masker : LibriSpeech
+  - masker : LibriSpeechASR
   - decoder : TransformerDecoder
   - encoder : TransformerBase
 

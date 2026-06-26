@@ -149,35 +149,34 @@ class SpeechJEPAForCTC(pl.LightningModule):
         lr: float = 1e-4,    
         total_steps: int = 80000,
         freeze_encoder_updates: int = 10000, 
-        mask_time_prob: float = 0.075,
+        mask_time_prob: float = 0.065,
         mask_time_length: int = 10,
         mask_time_min_masks : int = 2,
         mask_feature_prob: float = 0.004,
         mask_feature_length: int = 64,
         mask_feature_min_masks : int = 0,
+        dropout : float = 0.1,
         downsampling_factor: int = 320, 
-        use_kernel_dropout_encoder : bool = False,
-        use_kernel_dropout_decoder : bool = False,
-        with_decoder: bool = False
+        with_decoder: bool = False,
+        use_superb: bool = False
     ):
         super().__init__()
         self.save_hyperparameters(ignore=['pretrained_jepa'])
 
         self.bundle = bundle
         self.do_with_decoder = with_decoder
+        self.use_superb = use_superb
         self.labels = self.bundle.get_labels()   
-        self.use_kernel_dropout_encoder = use_kernel_dropout_encoder
-        self.use_kernel_dropout_decoder = use_kernel_dropout_decoder
         try:
             self.pad_token_id = self.labels.index("-")
         except ValueError:
             print("Warning: '-' not found in labels! Defaulting pad_token_id to 0.")
             self.pad_token_id = 0        
         
+        self.model = pretrained_jepa
         self.extract_audio = pretrained_jepa.extract_audio
         self.audio_feature_norms = pretrained_jepa.audio_feature_norms
         self.post_extraction_mapper = pretrained_jepa.post_extraction_mapper
-        self.encoder_pos_emb = pretrained_jepa.encoder_pos_emb
         if hasattr(pretrained_jepa, "encoder_sin_cos_pos_embedding"):
             self.encoder_sin_cos_emb = pretrained_jepa.encoder_sin_cos_pos_embedding
         else:
@@ -192,10 +191,7 @@ class SpeechJEPAForCTC(pl.LightningModule):
         self.encoder = pretrained_jepa.encoder
         
         if with_decoder:
-            self.encoder_to_decoder_mapper = pretrained_jepa.encoder_to_decoder_mapper
-            self.decoder_to_encoder_mapper = pretrained_jepa.decoder_to_encoder_mapper 
             self.decoder = pretrained_jepa.decoder 
-            self.decoder_pos_embed =  pretrained_jepa.decoder_pos_emb
             print("Performing ASR with the decoder")
 
     
@@ -209,9 +205,11 @@ class SpeechJEPAForCTC(pl.LightningModule):
         self.mask_feature_length = mask_feature_length  
         self.mask_feature_min_masks = mask_feature_min_masks
 
-        
-        #Layer dropout as seen in Wav2Vec2.0
-        self.dropout = nn.Dropout(0.05)
+
+        #Wav2Vec2.0 drops futures right before the transformer
+        self.hidden_dropout = nn.Dropout(0.1)
+        #CTC Dropout
+        self.dropout = nn.Dropout(dropout)
         self.lm_head = nn.Linear(pretrained_jepa.encoder_embedding_dim, len(self.labels))
         
         if self.mask_time_prob > 0.0 or self.mask_feature_prob > 0.0:
@@ -221,37 +219,55 @@ class SpeechJEPAForCTC(pl.LightningModule):
         self.train_wer_metric = WordErrorRate()
         self.val_wer_metric = WordErrorRate()
         self.test_wer_metric = WordErrorRate()
+        self.val_wer_metric_greedy = WordErrorRate()
+        self.test_wer_metric_greedy = WordErrorRate()
 
         self.extract_audio.requires_grad_(False)    
+        self.extract_audio.eval() 
+
         if self.hparams.freeze_encoder_updates > 0:
+            self.audio_feature_norms.requires_grad_(False)
+            self.audio_feature_norms.eval()
             self.encoder.requires_grad_(False)
+            self.encoder.eval()
             self.local_feature_norms.requires_grad_(False)
-            self.encoder_pos_emb.requires_grad_(False)
+            self.local_feature_norms.eval()
             self.post_extraction_mapper.requires_grad_(False)
+            self.post_extraction_mapper.eval()
             if with_decoder:
-                self.encoder_to_decoder_mapper.requires_grad_(False)
-                self.decoder_to_encoder_mapper.requires_grad_(False)
                 self.decoder.requires_grad_(False)
-                self.decoder_pos_embed.requires_grad_(False)
+                self.decoder.eval()
 
-        self.beam_search_dev = None
-        self.beam_search_test = None
-
-    def prepare_data(self):
-        download_pretrained_files("librispeech-4-gram")
-
-    def setup(self, stage=None):
         self.decoder_files = download_pretrained_files("librispeech-4-gram")
         self.beam_search_dev = self._setup_torchaudio_decoder(beam_size=50, lm_weight=2.0, word_score=-1.0)
         self.beam_search_test = self._setup_torchaudio_decoder(beam_size=50)
+        if self.use_superb:
+            self.layer_weights = nn.Parameter(
+                torch.ones(pretrained_jepa.encoder.num_layers + 1)  # +1 for embedding layer
+            )
 
     def on_train_batch_start(self, batch, batch_idx):
+        self.extract_audio.eval()  # Always frozen, always eval
+        if self.global_step < self.hparams.freeze_encoder_updates:
+            self.audio_feature_norms.eval()
+            self.encoder.eval()
+            self.local_feature_norms.eval()
+            self.post_extraction_mapper.eval()
+            if self.do_with_decoder:
+                self.decoder.eval()
+        
         if self.global_step == self.hparams.freeze_encoder_updates:
             self.print(f"Unfreezing encoder at step {self.global_step}!")
+            self.encoder.train()
+            self.audio_feature_norms.train()
+            self.local_feature_norms.train()
+            self.post_extraction_mapper.train()
+        
             self.encoder.requires_grad_(True)
+            self.audio_feature_norms.requires_grad_(True)
             self.local_feature_norms.requires_grad_(True)
-            self.encoder_pos_emb.requires_grad_(True)
             self.post_extraction_mapper.requires_grad_(True)
+
 
     def _mask_hidden_states(
         self,
@@ -304,67 +320,41 @@ class SpeechJEPAForCTC(pl.LightningModule):
             sil_token="|"         
         )
 
-    def forward(self, audio: torch.Tensor, attention_mask: torch.Tensor, padding_mask: torch.Tensor):
+    def forward(self, audio, attention_mask, padding_mask):
         audio = masked_instance_normalize(audio, padding_mask)
+
         with torch.no_grad():
             x = self.extract_audio(audio)
-            
+
         x = self.audio_feature_norms(x)
-        if self.post_extraction_mapper:
-            x = self.post_extraction_mapper(x)
-              
-        # #True for masked tokens.
-        x = self._mask_hidden_states(
-            x, attention_mask=~attention_mask
+        x = self.post_extraction_mapper(x)
+        x = self.local_feature_norms(x)
+        x = self._mask_hidden_states(x, attention_mask=~attention_mask)
+        x = self.hidden_dropout(x)
+        x = self.encoder(
+            x, 
+            src_key_padding_mask=attention_mask,
         )
-
-        if self.use_kernel_dropout_encoder:
-            x = x + self.encoder_pos_emb(x, mask=~attention_mask)                
-        else:
-            x = x + self.encoder_pos_emb(x)
-
-        if self.encoder_sin_cos_emb: 
-            x = x + self.encoder_sin_cos_emb(x)
-        
-        x = self.local_feature_norms(x)  
-        try:
-            x = self.encoder(x, src_key_padding_mask=attention_mask)
-        except:  # noqa: E722
-            x = self.encoder(x, attention_mask=attention_mask)
-        
-
-        if self.do_with_decoder:
-            x = self.encoder_to_decoder_mapper(x)
-            if self.use_kernel_dropout_decoder:
-                x = x + self.decoder_pos_embed(x, mask=~attention_mask)
-            else:
-                x = x + self.decoder_pos_embed(x)
-            if self.decoder_sin_cos_emb: 
-                x = x + self.decoder_sin_cos_emb(x)
-                
-            x = self.decoder(x, src_key_padding_mask=attention_mask)
-            x = self.decoder_to_encoder_mapper(x)
-
-        x = F.layer_norm(x, (x.shape[-1],)) 
         return self.lm_head(self.dropout(x))
 
+
     def _greedy_decode(self, logits, lengths):
-            """Ultra-fast decoding to compute training WER without bogging down the GPU."""
-            preds = torch.argmax(logits, dim=-1) # (B, T)
-            predictions =[]
-            for i in range(preds.size(0)):
-                pred = preds[i][:lengths[i]]
-                pred = torch.unique_consecutive(pred)
-                pred = pred[pred != self.pad_token_id]
-                
-                # Replace boundaries with spaces
-                raw_text = "".join([self.labels[p] for p in pred]).replace("|", " ")
-                
-                # Split and join cleans up any double/triple spaces
-                clean_text = " ".join(raw_text.split())
-                
-                predictions.append(clean_text)
-            return predictions
+        """Ultra-fast decoding to compute training WER without bogging down the GPU."""
+        preds = torch.argmax(logits, dim=-1) # (B, T)
+        predictions =[]
+        for i in range(preds.size(0)):
+            pred = preds[i][:lengths[i]]
+            pred = torch.unique_consecutive(pred)
+            pred = pred[pred != self.pad_token_id]
+            
+            # Replace boundaries with spaces
+            raw_text = "".join([self.labels[p] for p in pred]).replace("|", " ")
+            
+            # Split and join cleans up any double/triple spaces
+            clean_text = " ".join(raw_text.split())
+            
+            predictions.append(clean_text)
+        return predictions
 
     def training_step(self, batch, batch_idx):
         audio, labels, padding_mask, attention_mask, text_targets = (
@@ -375,7 +365,7 @@ class SpeechJEPAForCTC(pl.LightningModule):
         
         loss = None
         if labels is not None:
-            #Padding mask is true where it is the "real" audio
+            # Padding mask is true where it is the "real" audio
             input_lengths = self._get_feat_extract_output_lengths(padding_mask.sum(-1)).to(torch.long)
 
             # assuming that padded tokens are filled with -100
@@ -388,14 +378,10 @@ class SpeechJEPAForCTC(pl.LightningModule):
 
             with torch.backends.cudnn.flags(enabled=False):
                 loss = nn.functional.ctc_loss(
-                    log_probs,
-                    flattened_targets,
-                    input_lengths,
-                    target_lengths,
-                    blank=self.pad_token_id,
-                    reduction="mean", 
-                    zero_infinity=True 
-                )
+                                    log_probs, flattened_targets, input_lengths, target_lengths,
+                                    blank=self.pad_token_id, reduction="mean",
+                                    zero_infinity=True,    # was False
+                                )
 
             with torch.no_grad():
                 preds = self._greedy_decode(logits.detach().cpu(), input_lengths.cpu())
@@ -405,38 +391,45 @@ class SpeechJEPAForCTC(pl.LightningModule):
             self.log("train/wer_greedy", wer, prog_bar=True, on_step=True)
             
         return loss
+
     def validation_step(self, batch, batch_idx):
         audio, padding_mask, attention_mask, text_targets = (
             batch["audio"], batch["padding_mask"], batch["attention_mask"], batch["text"]
         )
         
         logits = self(audio, attention_mask, padding_mask)
-        emissions = nn.functional.log_softmax(logits, dim=-1, dtype=torch.float32).cpu().contiguous()
+        # emissions = nn.functional.log_softmax(logits, dim=-1, dtype=torch.float32).cpu().contiguous()
         
         raw_audio_lengths = padding_mask.sum(dim=-1)
-        
         feat_lengths = self._get_feat_extract_output_lengths(raw_audio_lengths)
             
-        lengths = feat_lengths.cpu().to(torch.int32)
+        # lengths_int32 = feat_lengths.cpu().to(torch.int32)
+        # beam_results = self.beam_search_dev(emissions, lengths_int32)
+        # predictions_lm = [" ".join(res[0].words).strip().upper() for res in beam_results]
         
-        beam_results = self.beam_search_dev(emissions, lengths)
-        predictions =[" ".join(res[0].words).strip().upper() for res in beam_results]
+        lengths_long = feat_lengths.cpu().to(torch.long)
+        predictions_greedy = self._greedy_decode(logits.detach().cpu(), lengths_long)
         
         if batch_idx == 0:
-            print(f"\nPredictions: {predictions[:2]}")
-            print(f"Targets:     {text_targets[:2]}")
+            print(f"\nTargets:             {text_targets[:2]}")
+            # print(f"Predictions (LM):    {predictions_lm[:2]}")
+            print(f"Predictions (No LM): {predictions_greedy[:2]}")
             
-        self.val_wer_metric.update(predictions, text_targets)
+        # self.val_wer_metric.update(predictions_lm, text_targets)
+        self.val_wer_metric_greedy.update(predictions_greedy, text_targets)
 
     def on_validation_epoch_end(self):
-        val_wer = self.val_wer_metric.compute()
+        # val_wer_lm = self.val_wer_metric.compute()
+        val_wer_greedy = self.val_wer_metric_greedy.compute()
         
-        self.log("val/wer_4gram", val_wer, sync_dist=True)
+        # self.log("val/wer_4gram", val_wer_lm, sync_dist=True)
+        self.log("val/wer_greedy", val_wer_greedy, sync_dist=True)
         
-        self.print(f"\n---> [Step {self.global_step}] Validation WER (4-gram LM): {val_wer * 100:.2f}% <---")
-        
-        self.val_wer_metric.reset()
+        # self.print(f"\n---> [Step {self.global_step}] Validation WER | 4-gram LM: {val_wer_lm * 100:.2f}% | Greedy: {val_wer_greedy * 100:.2f}% <---")
+        self.print(f"\n---> [Step {self.global_step}] Validation WER | Greedy: {val_wer_greedy * 100:.2f}% <---")
 
+        # self.val_wer_metric.reset()
+        self.val_wer_metric_greedy.reset()
 
     def test_step(self, batch, batch_idx):
         audio, padding_mask, attention_mask, text_targets = (
@@ -444,32 +437,43 @@ class SpeechJEPAForCTC(pl.LightningModule):
         )
         
         logits = self(audio, attention_mask, padding_mask)
-        emissions = nn.functional.log_softmax(logits, dim=-1, dtype=torch.float32).cpu().contiguous()
+        # emissions = nn.functional.log_softmax(logits, dim=-1, dtype=torch.float32).cpu().contiguous()
         
         raw_audio_lengths = padding_mask.sum(dim=-1)
-        
         feat_lengths = self._get_feat_extract_output_lengths(raw_audio_lengths)
             
-        lengths = feat_lengths.cpu().to(torch.int32)
-        
-        beam_results = self.beam_search_test(emissions, lengths)
-        predictions =[" ".join(res[0].words).strip().upper() for res in beam_results]
+        # lengths_int32 = feat_lengths.cpu().to(torch.int32)
+        # beam_results = self.beam_search_test(emissions, lengths_int32)
+        # predictions_lm = [" ".join(res[0].words).strip().upper() for res in beam_results]
+
+        lengths_long = feat_lengths.cpu().to(torch.long)
+        predictions_greedy = self._greedy_decode(logits.detach().cpu(), lengths_long)
         
         if batch_idx == 0:
-            print(f"\nPredictions: {predictions[:2]}")
-            print(f"Targets:     {text_targets[:2]}")
+            print(f"\nTargets:             {text_targets[:2]}")
+            # print(f"Predictions (LM):    {predictions_lm[:2]}")
+            print(f"Predictions (No LM): {predictions_greedy[:2]}")
             
-        self.test_wer_metric.update(predictions, text_targets)
-
+        # self.test_wer_metric.update(predictions_lm, text_targets)
+        self.test_wer_metric_greedy.update(predictions_greedy, text_targets)
 
     def on_test_epoch_end(self):
-        test_wer = self.test_wer_metric.compute()
-        self.log("test/wer_4gram", test_wer, sync_dist=True)
-        self.print(f"\nFinal Test WER (with 4-gram LM): {test_wer * 100:.2f}%")
+        # test_wer_lm = self.test_wer_metric.compute()
+        test_wer_greedy = self.test_wer_metric_greedy.compute()
+        
+        # self.log("test/wer_4gram", test_wer_lm, sync_dist=True)
+        self.log("test/wer_greedy", test_wer_greedy, sync_dist=True)
+        
+        # self.print(f"\nFinal Test WER | 4-gram LM: {test_wer_lm * 100:.2f}% | Greedy (No LM): {test_wer_greedy * 100:.2f}%")
+        self.print(f"\n---> [Step {self.global_step}] Test WER | Greedy: {test_wer_greedy * 100:.2f}% <---")
+
         self.test_wer_metric.reset()
+        self.test_wer_metric_greedy.reset()
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.lr)
+        optimizer = torch.optim.Adam(self.parameters(), 
+                                     betas= (0.9,0.98),
+                                     lr=self.hparams.lr)
         scheduler = get_tri_state_schedule(optimizer, total_steps=self.hparams.total_steps)
         return {
             "optimizer": optimizer,

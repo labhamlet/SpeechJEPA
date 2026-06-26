@@ -179,7 +179,7 @@ class SSLDataModule(pl.LightningDataModule):
                             workersplitter=wds.shardlists.split_by_worker,
                             shardshuffle=False,
                            handler=wds.warn_and_continue)
-            .decode(wds.torch_audio)
+            .decode(wds.torch_audio, handler=wds.warn_and_continue)
             .rename(signal="flac")
             .select(lambda x: x["signal"][0].shape[-1] >= self.hparams.min_sample_len)
             .map(self._augment_sample)
