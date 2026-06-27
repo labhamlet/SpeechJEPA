@@ -3,24 +3,26 @@ manifest: 1h.txt
 root_dir: librispeech_finetuning/1h
 
 # Model
-model_path: /gpfs/work5/0/prjs1261/speech_jepa/Rope=True/ConvPos=True/Data=LibriSpeech/EMA=0.999/EMAEnd=0.99999/EMASteps=100000/DecoderNR=3/DecoderEmbed=384/MaxBatchSize=6000000/NrGPUs=1/LR=0.0004/LRWarmup=15000/TargetProb=0.2/TargetLen=5/MinContextBlock=5/ContextRatio=0.4/step=110000-v1.ckpt
+model_path: /gpfs/work5/0/prjs1261/speech_jepa/Rope=True/ConvPos=True/Data=LibriSpeech/EMA=0.999/EMAEnd=0.99999/EMASteps=100000/DecoderNR=3/DecoderEmbed=384/MaxBatchSize=6000000/NrGPUs=1/LR=0.0004/LRWarmup=15000/TargetProb=0.2/TargetLen=5/MinContextBlock=5/ContextRatio=0.4/step=150000-v1.ckpt
 use_decoder_for_asr: false
 use_superb: false
 
 # Training hyperparameters
-lr: 5e-5
-steps: 15000             # matches paper Table 6 for 1h (fairseq default is ~15k; either is fine)
+lr: 3e-4
+steps: 13000
 freeze_encoder_updates: 10000
-max_tokens: 1600000
+max_tokens: 7680000
+acc_grad_batches : 1
 num_gpus: 1
 
-# Masking (SpecAugment) — code-convention: coverage ≈ prob
-mask_time_prob: 0.65     # was 0.075 (paper value) → 0.075 × mask_time_length(10)
-mask_feature_prob: 0.5   # was 0.004 (paper value) → 0.004 × mask_feature_length(64) ≈ 0.25–0.5
 
-# Dropout
-dropout: 0.1             # CTC head; stock fairseq final_dropout is often 0.0, but 0.1 is reasonable
-layer_drop: 0.05         # was 0.1 → 0.1 is the LARGE value; BASE uses 0.05
-activation_dropout: 0.1  # matches fairseq base
+#Masking Config
+mask_time_prob: 0.75 
+mask_feature_prob: 0.256
+
+# Regularizer
+dropout: 0.0
+layer_drop: 0.1
+activation_dropout: 0.1
 attn_dropout: 0.0
 hidden_dropout: 0.0

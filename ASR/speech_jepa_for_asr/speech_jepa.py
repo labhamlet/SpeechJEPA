@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 from torchmetrics.text import WordErrorRate
 from torchaudio.models.decoder import ctc_decoder, download_pretrained_files
-from .utils import get_tri_state_schedule
+from .utils import get_tri_stage_schedule
 import numpy as np 
 
 
@@ -146,16 +146,16 @@ class SpeechJEPAForCTC(pl.LightningModule):
         pretrained_jepa: pl.LightningModule,
         bundle,
         audio_token_func,
-        lr: float = 1e-4,    
-        total_steps: int = 80000,
+        lr: float = 3e-4,    
+        total_steps: int = 13000,
         freeze_encoder_updates: int = 10000, 
-        mask_time_prob: float = 0.065,
+        mask_time_prob: float = 0.75,
         mask_time_length: int = 10,
         mask_time_min_masks : int = 2,
-        mask_feature_prob: float = 0.004,
+        mask_feature_prob: float = 0.256,
         mask_feature_length: int = 64,
-        mask_feature_min_masks : int = 0,
-        dropout : float = 0.1,
+        mask_feature_min_masks : int = 2,
+        dropout : float = 0.0,
         downsampling_factor: int = 320, 
         with_decoder: bool = False,
         use_superb: bool = False
@@ -206,9 +206,7 @@ class SpeechJEPAForCTC(pl.LightningModule):
         self.mask_feature_min_masks = mask_feature_min_masks
 
 
-        #Wav2Vec2.0 drops futures right before the transformer
-        self.hidden_dropout = nn.Dropout(0.1)
-        #CTC Dropout
+        self.hidden_dropout = nn.Dropout(0.0)
         self.dropout = nn.Dropout(dropout)
         self.lm_head = nn.Linear(pretrained_jepa.encoder_embedding_dim, len(self.labels))
         
@@ -278,8 +276,6 @@ class SpeechJEPAForCTC(pl.LightningModule):
         Masks extracted features along time axis and/or along feature axis according to
         [SpecAugment](https://huggingface.co/papers/1904.08779).
         """
-
-
         # generate indices & apply SpecAugment along time axis
         batch_size, sequence_length, hidden_size = hidden_states.size()
         if self.mask_time_prob > 0 and self.training:
@@ -378,10 +374,10 @@ class SpeechJEPAForCTC(pl.LightningModule):
 
             with torch.backends.cudnn.flags(enabled=False):
                 loss = nn.functional.ctc_loss(
-                                    log_probs, flattened_targets, input_lengths, target_lengths,
-                                    blank=self.pad_token_id, reduction="mean",
-                                    zero_infinity=True,    # was False
-                                )
+                    log_probs, flattened_targets, input_lengths, target_lengths,
+                    blank=self.pad_token_id, reduction="sum", zero_infinity=True,
+                )
+                loss = loss / audio.size(0)     # normalize by #sentences ≈ sentence_avg=True
 
             with torch.no_grad():
                 preds = self._greedy_decode(logits.detach().cpu(), input_lengths.cpu())
@@ -472,9 +468,11 @@ class SpeechJEPAForCTC(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), 
-                                     betas= (0.9,0.98),
+                                     betas=(0.9,0.98),
                                      lr=self.hparams.lr)
-        scheduler = get_tri_state_schedule(optimizer, total_steps=self.hparams.total_steps)
+        scheduler = get_tri_stage_schedule(optimizer, 
+                                           final_lr_scale=0.05,
+                                           total_steps=self.hparams.total_steps)
         return {
             "optimizer": optimizer,
             "lr_scheduler": {"scheduler": scheduler, "interval": "step"}

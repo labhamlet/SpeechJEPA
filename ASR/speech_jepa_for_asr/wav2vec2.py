@@ -5,7 +5,7 @@ import pytorch_lightning as pl
 from torchmetrics.text import WordErrorRate
 from torchaudio.models.decoder import ctc_decoder, download_pretrained_files
 from transformers import AutoModel, AutoConfig
-from .utils import get_tri_state_schedule
+from .utils import get_tri_stage_schedule
 import numpy as np 
 
 
@@ -17,12 +17,17 @@ class HuggingFaceASRForCTC(pl.LightningModule):
         lr: float = 1e-4,    
         total_steps: int = 80000,
         freeze_encoder_updates: int = 10000, 
-        mask_time_prob: float = 0.65,      # was 0.075
+        mask_time_prob: float = 0.75,      # was 0.075
         mask_time_length: int = 10,
         mask_time_min_masks: int = 2,      # added
-        mask_feature_prob: float = 0.25,    # was 0.004
+        mask_feature_prob: float = 0.256,    # was 0.004
         mask_feature_length: int = 64,
         mask_feature_min_masks: int = 0,   # added
+        layer_drop : int = 0.1, 
+        activation_dropout: int = 0.1,
+        hidden_dropout: int = 0.0,
+        attention_dropout: int = 0.0,
+        lm_dropout: int = 0.0
     ):
         super().__init__()
         self.save_hyperparameters(ignore=['bundle'])
@@ -34,20 +39,22 @@ class HuggingFaceASRForCTC(pl.LightningModule):
         except ValueError:
             print("Warning: '-' not found in labels! Defaulting pad_token_id to 0.")
             self.pad_token_id = 0        
-        
-
+    
         config = AutoConfig.from_pretrained(
             model_name_or_path,
-            mask_time_prob=0.65, mask_time_length=10, mask_time_min_masks=2,
-            mask_feature_prob=0.25, mask_feature_length=64, mask_feature_min_masks=0,
+            mask_time_prob=mask_time_prob, 
+            mask_time_length=mask_time_length, 
+            mask_time_min_masks=mask_time_min_masks,
+            mask_feature_prob=mask_feature_prob, 
+            mask_feature_length=mask_feature_length,
+            mask_feature_min_masks=mask_feature_min_masks,
             apply_spec_augment=True,
-            layerdrop=0.1,            # ✓ keep
-            activation_dropout=0.1,   # ✓ keep — the one non-zero dropout in the recipe
-            hidden_dropout=0.0,       # was 0.1
-            attention_dropout=0.0,    # was 0.1
-            # feat_proj_dropout stays at its 0.0 default
+            layerdrop=layer_drop, 
+            activation_dropout=activation_dropout,
+            hidden_dropout=hidden_dropout,
+            attention_dropout=attention_dropout,
         )
-        self.dropout = nn.Dropout(0.0)   # was 0.05; fairseq final_dropout = 0.0
+        self.dropout = nn.Dropout(lm_dropout)
         self.model = AutoModel.from_pretrained(model_name_or_path, config=config)
         
         # We always want the CNN feature extractor frozen during ASR fine-tuning
@@ -69,6 +76,8 @@ class HuggingFaceASRForCTC(pl.LightningModule):
         self.beam_search_dev = None
         self.beam_search_test = None
 
+        self.model.training = True
+
     def prepare_data(self):
         download_pretrained_files("librispeech-4-gram")
 
@@ -84,6 +93,7 @@ class HuggingFaceASRForCTC(pl.LightningModule):
             # Make sure the CNN feature extractor remains frozen even after unfreezing
             if hasattr(self.model, "freeze_feature_encoder"):
                 self.model.freeze_feature_encoder()
+            self.model.training=True
 
     def _setup_torchaudio_decoder(self, beam_size, lm_weight=2.0, word_score=-1.0):
         return ctc_decoder(
@@ -103,7 +113,9 @@ class HuggingFaceASRForCTC(pl.LightningModule):
             audio = audio.squeeze(1)
 
         model_kwargs = {}
-        if self.model.config.feat_extract_norm == "layer":
+
+        feat_extract_norm = getattr(self.model.config, "feat_extract_norm", "layer")
+        if feat_extract_norm == "layer":
             model_kwargs["attention_mask"] = padding_mask.long()
 
         outputs = self.model(audio, **model_kwargs)
@@ -125,6 +137,7 @@ class HuggingFaceASRForCTC(pl.LightningModule):
         return predictions
 
     def training_step(self, batch, batch_idx):
+        self.model.training = True
         audio, labels, padding_mask, text_targets = (
             batch["audio"], batch['labels'], batch["padding_mask"], batch["text"]
         )
@@ -158,6 +171,7 @@ class HuggingFaceASRForCTC(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
+            self.model.training = False
             audio, padding_mask, text_targets = batch["audio"], batch["padding_mask"], batch["text"]
 
             logits = self(audio, padding_mask)
@@ -180,6 +194,7 @@ class HuggingFaceASRForCTC(pl.LightningModule):
         self.val_wer_metric.reset()
 
     def test_step(self, batch, batch_idx):
+            self.model.training = False
             audio, padding_mask, text_targets = batch["audio"], batch["padding_mask"], batch["text"]
 
             logits = self(audio, padding_mask)
@@ -208,7 +223,8 @@ class HuggingFaceASRForCTC(pl.LightningModule):
                 betas=(0.9, 0.98),            # adam_betas: (0.9,0.98)
                 eps=1e-8                      # adam_eps: 1e-08
             )
-            scheduler = get_tri_state_schedule(optimizer, total_steps=self.hparams.total_steps)
-            # Note: Your tri_state_schedule must use phase_ratio=[0.1, 0.4, 0.5] and final_lr_scale=0.05
+            scheduler = get_tri_stage_schedule(optimizer, 
+                                               final_lr_scale=0.05,
+                                               total_steps=self.hparams.total_steps)
             return {"optimizer": optimizer,
                     "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}

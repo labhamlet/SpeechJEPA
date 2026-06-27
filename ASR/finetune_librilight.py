@@ -8,7 +8,7 @@ from utils import _get_feat_extract_output_lengths
 import pytorch_lightning as pl 
 from data_modules_asr.libri_light import LibriLightDataModule
 from functools import partial
-from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, TQDMProgressBar
 
 import sys 
 sys.path.append("/home/gyuksel2/SpeechJEPA")
@@ -29,12 +29,15 @@ manifest_dir = "manifests"
 
 dev_other = os.path.join(manifest_dir, "dev_other.txt")
 dev_clean = os.path.join(manifest_dir, "dev_clean.txt")
+test_other = os.path.join(manifest_dir, "test_other.txt")
+test_clean = os.path.join(manifest_dir, "test_clean.txt")
 
 dev_other_dir = "LibriSpeech/dev-other"
 dev_clean_dir = "LibriSpeech/dev-clean"
+test_other_dir = "LibriSpeech/test-other"
+test_clean_dir = "LibriSpeech/test-clean"
 
-
-torch.set_float32_matmul_precision('medium')
+torch.set_float32_matmul_precision('high')
 seed_everything(42)
 bundle = torchaudio.pipelines.WAV2VEC2_ASR_BASE_960H
 LABELS = bundle.get_labels()
@@ -58,6 +61,16 @@ class CharTokenizer:
         return[self.id_to_char[t] for t in tokens]
     
 
+class OptimizationStepsProgressBar(TQDMProgressBar):
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        # 1. Update the progress bar's internal step counter (the left side)
+        if self.train_progress_bar is not None:
+            self.train_progress_bar.n = trainer.global_step
+            metrics = trainer.progress_bar_metrics
+            self.train_progress_bar.set_postfix(metrics)
+            if (batch_idx + 1) % trainer.accumulate_grad_batches == 0:
+                self.train_progress_bar.refresh()
+
 def train_librilight(
     pretrained_jepa_model,
     cfg: DictConfig,
@@ -76,10 +89,14 @@ def train_librilight(
         dev_other_dir=dev_other_dir,
         dev_clean=dev_clean,
         dev_clean_dir=dev_clean_dir,
+        test_clean=test_clean, 
+        test_clean_dir=test_clean_dir,
+        test_other=test_other, 
+        test_other_dir=test_other_dir,
         tokenizer=CharTokenizer(),
         audio_token_func=audio_token_func,
         max_tokens=cfg.max_tokens,
-        num_workers=4,
+        num_workers=6,
     )
  
     model = SpeechJEPAForCTC(
@@ -107,18 +124,21 @@ def train_librilight(
         verbose=True,
     )
  
+    progress_bar = OptimizationStepsProgressBar()
     trainer = pl.Trainer(
         max_steps=cfg.steps,
         accelerator="gpu",
         max_epochs=-1,
         precision="bf16-mixed",
-        val_check_interval=1000,
+        val_check_interval=1000 * cfg.acc_grad_batches,
+        accumulate_grad_batches= cfg.acc_grad_batches,
         callbacks=[
             LearningRateMonitor(logging_interval="step"),
             checkpoint_callback,
+            progress_bar
         ],
         devices=cfg.num_gpus,
-        strategy='ddp_find_unused_parameters_true'
+        strategy='auto'
     )
  
     trainer.fit(
@@ -133,6 +153,8 @@ def train_librilight(
     all_splits = {
         "dev_other":  datamodule.dev_other_dataloader(),
         "dev_clean":  datamodule.dev_clean_dataloader(),
+        "test_clean": datamodule.test_clean_dataloader(),
+        "test_other": datamodule.test_other_dataloader(),
     }
  
     results: dict[str, dict[str, float]] = {}
@@ -155,6 +177,7 @@ def train_librilight(
             use_superb=use_superb,
             mask_time_prob=cfg.mask_time_prob,
             mask_feature_prob=cfg.mask_feature_prob,
+            weights_only=False,
         )
  
         ckpt_results: dict[str, float] = {"val_wer_greedy": val_wer.item()}
@@ -201,8 +224,8 @@ def load_model(cfg):
 
     model = JEPA(
                 feature_extractor=extractor,
-                transformer_encoder_cfg=TransformerEncoderCFG.create(),
-                transformer_encoder_layers_cfg=TransformerLayerCFG.create(),
+                transformer_encoder_layers_cfg = TransformerLayerCFG.create(),
+                transformer_encoder_cfg = TransformerEncoderCFG.create(),
                 resample_sr=16000,
                 size="base",
                 layer_drop = cfg.layer_drop,

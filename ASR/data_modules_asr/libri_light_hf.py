@@ -176,55 +176,48 @@ class CTCCollateFn:
 class LibriLightDataModule(pl.LightningDataModule):
     def __init__(
         self,
-        data_root: str,
-        val_data_root: str,
-        test_data_root : str, 
-        train_manifest_path: str,
-        val_manifest_path: str,
-        test_manifest_path: str,
         tokenizer,
         feature_extractor,
+        dev_other: str,
+        dev_other_dir: str,
+        dev_clean: str,
+        dev_clean_dir: str,
+        train: str,
+        train_dir: str,
+        test_clean: str = None,
+        test_clean_dir: str = None,
+        test_other: str = None,
+        test_other_dir: str = None,
         max_tokens: int = 6400000,
         num_workers: int = 4,
     ):
         super().__init__()
-        self.data_root = data_root
-        self.test_data_root = test_data_root
-        self.train_manifest_path = train_manifest_path
-        self.val_manifest_path = val_manifest_path
-        self.test_manifest_path = test_manifest_path 
+        self.dev_other = dev_other
+        self.dev_clean = dev_clean
+        self.test_other = test_other
+        self.test_clean = test_clean
+        self.train = train
+
+        self.dev_other_dir = dev_other_dir
+        self.dev_clean_dir = dev_clean_dir
+        self.test_other_dir = test_other_dir
+        self.test_clean_dir = test_clean_dir
+        self.train_dir = train_dir
 
         self.max_tokens = max_tokens
         self.num_workers = num_workers
-        self.val_data_root = val_data_root
-        
+
         # Pass feature extractor directly to the Collator
         self.collate_fn = CTCCollateFn(tokenizer, feature_extractor)
 
-    def setup(self, stage=None):
-        if stage == "fit" or stage is None:
-            self.train_dataset = StreamingLibriLightDataset(
-                root_dir=self.data_root, 
-                manifest_path=self.train_manifest_path,
-                max_tokens=self.max_tokens,
-                infinite=True
-            )
-            
-            self.val_dataset = StreamingLibriLightDataset(
-                root_dir=self.val_data_root, 
-                manifest_path=self.val_manifest_path,
-                max_tokens=self.max_tokens,
-                infinite=False
-            )
-        if stage == "test":
-            self.test_dataset = StreamingLibriLightDataset(
-                root_dir=self.test_data_root, 
-                manifest_path=self.test_manifest_path,
-                max_tokens=self.max_tokens,
-                infinite=False
-            )        
-        
     def train_dataloader(self):
+        self.train_dataset = StreamingLibriLightDataset(
+            root_dir=self.train_dir,
+            manifest_path=self.train,
+            max_tokens=self.max_tokens,
+            infinite=True,
+        )
+
         return DataLoader(
             self.train_dataset,
             batch_size=None,     
@@ -235,9 +228,16 @@ class LibriLightDataModule(pl.LightningDataModule):
             pin_memory=True, 
         )
 
-    def val_dataloader(self):
+    def dev_clean_dataloader(self):
+        self.dev_clean_dataset = StreamingLibriLightDataset(
+            root_dir=self.dev_clean_dir,
+            manifest_path=self.dev_clean,
+            max_tokens=self.max_tokens,
+            infinite=False,
+        )
+
         return DataLoader(
-            self.val_dataset,
+            self.dev_clean_dataset,
             batch_size=None,     
             shuffle=False,       
             collate_fn=self.collate_fn,
@@ -246,9 +246,52 @@ class LibriLightDataModule(pl.LightningDataModule):
             pin_memory=True, 
         )
 
-    def test_dataloader(self):
+    def dev_other_dataloader(self):
+        self.dev_other_dataset = StreamingLibriLightDataset(
+            root_dir=self.dev_other_dir,
+            manifest_path=self.dev_other,
+            max_tokens=self.max_tokens,
+            infinite=False,
+        )
+
         return DataLoader(
-            self.test_dataset,
+            self.dev_other_dataset,
+            batch_size=None,     
+            shuffle=False,       
+            collate_fn=self.collate_fn,
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            pin_memory=True, 
+        )
+
+    def test_clean_dataloader(self):
+        self.test_clean_dataset = StreamingLibriLightDataset(
+            root_dir=self.test_clean_dir,
+            manifest_path=self.test_clean,
+            max_tokens=self.max_tokens,
+            infinite=False,
+        )
+
+        return DataLoader(
+            self.test_clean_dataset,
+            batch_size=None,     
+            shuffle=False,       
+            collate_fn=self.collate_fn,
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            pin_memory=True, 
+        )
+
+    def test_other_dataloader(self):
+        self.test_other_dataset = StreamingLibriLightDataset(
+            root_dir=self.test_other_dir,
+            manifest_path=self.test_other,
+            max_tokens=self.max_tokens,
+            infinite=False,
+        )
+
+        return DataLoader(
+            self.test_other_dataset,
             batch_size=None,     
             shuffle=False,       
             collate_fn=self.collate_fn,

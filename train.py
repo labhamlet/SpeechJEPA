@@ -19,6 +19,8 @@ from speech_jepa.extractors import ConvFeatureExtractor, Extractor
 from speech_jepa.types import TransformerEncoderCFG, TransformerLayerCFG
 import torch.nn as nn
 
+from pytorch_lightning.callbacks import TQDMProgressBar
+
 # Map lowercase names to activation constructors
 
 # Component registries
@@ -160,7 +162,7 @@ def setup_callbacks(cfg):
     )
     
     lr_monitor = LearningRateMonitor(logging_interval="step")
-    return [checkpoint_callback, lr_monitor]
+    return [checkpoint_callback, lr_monitor, TQDMProgressBar()]
 
 
 def setup_trainer(cfg, logger, callbacks) -> pl.Trainer:
