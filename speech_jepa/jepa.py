@@ -121,6 +121,7 @@ class JEPA(pl.LightningModule):
         use_gradient_checkpointing: bool = False,
         compile_modules : bool = False,
         size : str = "base",
+        use_ctx_supervision : bool = False,
         **kwargs : dict[str, Any],
     ):
         
@@ -133,6 +134,10 @@ class JEPA(pl.LightningModule):
         self.save_hyperparameters(
             ignore=["feature_encoder", "feature_extractor", "loss_fn"]
         )
+        self.use_ctx_supervision = use_ctx_supervision
+        if self.use_ctx_supervision:
+            print("Using CTX supervision")
+            
         self.extract_audio = feature_extractor
         self.audio_feature_norms : nn.Module = nn.LayerNorm(self.extract_audio.embedding_dim)
 

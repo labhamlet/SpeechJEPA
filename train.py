@@ -126,6 +126,7 @@ class ComponentFactory:
                 average_top_k_layers = cfg.trainer.average_top_k_layers,
                 warmup_steps=cfg.trainer.warmup_steps,
                 size = cfg.trainer.get("size", "base"),
+                use_ctx_supervision= cfg.trainer.get("use_ctx_supervision", False)
             )
         except Exception as e:
             raise RuntimeError(f"Failed to create network instance: {str(e)}")
