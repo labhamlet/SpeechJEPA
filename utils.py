@@ -1,8 +1,8 @@
 def get_identity_from_cfg(cfg):
-    identity = "Rope={}_ConvPos={}_CtxSupervise={}_EMA={}_EMAEnd={}_EMASteps={}_".format(
+    identity = "Data={}_Rope={}_ConvPos={}_EMA={}_EMAEnd={}_EMASteps={}_".format(
+        cfg.data.get("name", "Libri"),
         cfg.trainer.get("use_rope", True), 
         cfg.trainer.get("use_conv_pos", True),
-        cfg.trainer.get("use_ctx_supervision", False),
         cfg.trainer.get("ema_decay"),
         cfg.trainer.get("ema_end_decay"),
         cfg.trainer.get("ema_anneal_end_step")
