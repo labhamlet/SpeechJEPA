@@ -1,4 +1,7 @@
-import os 
+import os
+import csv
+import re
+import fcntl
 import torchaudio 
 import torch 
 from speech_jepa_for_asr.speech_jepa import SpeechJEPAForCTC
@@ -8,7 +11,7 @@ from utils import _get_feat_extract_output_lengths
 import pytorch_lightning as pl 
 from data_modules_asr.libri_light import LibriLightDataModule
 from functools import partial
-from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, TQDMProgressBar
+from pytorch_lightning.callbacks import LearningRateMonitor, TQDMProgressBar
 
 import sys 
 sys.path.append("/home/gyuksel2/SpeechJEPA")
@@ -22,7 +25,7 @@ from pytorch_lightning import seed_everything
 
 import hydra
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 
 manifest_dir = "manifests"
@@ -38,7 +41,7 @@ test_other_dir = "LibriSpeech/test-other"
 test_clean_dir = "LibriSpeech/test-clean"
 
 torch.set_float32_matmul_precision('high')
-seed_everything(1234)
+seed_everything(42)
 bundle = torchaudio.pipelines.WAV2VEC2_ASR_BASE_960H
 LABELS = bundle.get_labels()
 conv_cfg = {
@@ -46,6 +49,67 @@ conv_cfg = {
     "conv_stride": [5,2,2,2,2,2,2],
     "convs" : [(512, 10, 5)] +[(512, 3, 2)] * 4 + [(512,2,2)] +[(512,2,2)]
 }
+
+
+def parse_run_meta(model_path):
+    """Pull the pre-training GPU count and checkpoint step from the path.
+
+    nr_gpus comes from the `NrGPUs=<n>` segment of the directory.
+    steps comes from the checkpoint filename, which Lightning writes as
+    `step=<n>.ckpt` (and `step=<n>-v1.ckpt`, `-v2`, ... on collisions);
+    a bare `<n>.ckpt` is also handled as a fallback.
+    """
+    m = re.search(r"NrGPUs=(\d+)", model_path)
+    nr_gpus = int(m.group(1)) if m else None
+
+    fname = os.path.basename(model_path)
+    sm = re.search(r"step=(\d+)", fname)
+    if sm:
+        steps = int(sm.group(1))
+    else:
+        stem = os.path.splitext(fname)[0]
+        try:
+            steps = int(stem)
+        except ValueError:
+            steps = stem
+    return nr_gpus, steps
+
+
+def append_results_csv(csv_path, nr_gpus, steps, results):
+    """Append one WER row to a shared CSV (safe for concurrent array tasks).
+
+    WERs are stored as percentages rounded to 2 dp, matching the printed table.
+    """
+    fieldnames = ["nr_gpus", "steps", "dev_clean", "dev_other", "test_clean", "test_other"]
+    row = {
+        "nr_gpus": nr_gpus,
+        "steps": steps,
+        "dev_clean": round(results["dev_clean"] * 100, 2),
+        "dev_other": round(results["dev_other"] * 100, 2),
+        "test_clean": round(results["test_clean"] * 100, 2),
+        "test_other": round(results["test_other"] * 100, 2),
+    }
+
+    parent = os.path.dirname(csv_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    with open(csv_path, "a", newline="") as f:
+        # Exclusive lock so parallel SLURM array tasks don't interleave rows
+        # or each write a header.
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            f.seek(0, os.SEEK_END)
+            write_header = f.tell() == 0
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if write_header:
+                writer.writeheader()
+            writer.writerow(row)
+            f.flush()
+            os.fsync(f.fileno())
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
 
 class CharTokenizer:
     def __init__(self):
@@ -78,6 +142,9 @@ def train_librilight(
     train_dir: str,
     use_superb: bool,
     use_decoder_for_asr: bool,
+    nr_gpus: int | None = None,
+    pretrain_steps: int | str | None = None,
+    results_csv: str = "sweep_results.csv",
 ) -> float:
     train_manifest = os.path.join(manifest_dir, train)
     audio_token_func = partial(_get_feat_extract_output_lengths, cfg=conv_cfg)
@@ -113,17 +180,6 @@ def train_librilight(
         dropout=cfg.dropout
     )
  
-
-    checkpoint_callback = ModelCheckpoint(
-        monitor="val/wer_greedy", 
-        mode="min", 
-        save_top_k=2,
-        filename="step={step}-wer={val/wer_greedy:.4f}",
-        auto_insert_metric_name=False,
-        save_last=True,
-        verbose=True,
-    )
- 
     progress_bar = OptimizationStepsProgressBar()
     trainer = pl.Trainer(
         max_steps=cfg.steps,
@@ -134,7 +190,6 @@ def train_librilight(
         accumulate_grad_batches= cfg.acc_grad_batches,
         callbacks=[
             LearningRateMonitor(logging_interval="step"),
-            checkpoint_callback,
             progress_bar
         ],
         devices=cfg.num_gpus,
@@ -147,9 +202,6 @@ def train_librilight(
         val_dataloaders=datamodule.dev_other_dataloader(),
     )
  
-    best_checkpoints = checkpoint_callback.best_k_models
-    ranked = sorted(best_checkpoints.items(), key=lambda x: x[1])
- 
     all_splits = {
         "dev_other":  datamodule.dev_other_dataloader(),
         "dev_clean":  datamodule.dev_clean_dataloader(),
@@ -157,57 +209,29 @@ def train_librilight(
         "test_other": datamodule.test_other_dataloader(),
     }
  
-    results: dict[str, dict[str, float]] = {}
- 
-    for rank, (ckpt_path, val_wer) in enumerate(ranked, start=1):
-        print(f"\n{'='*60}")
-        print(f"  Evaluating top-{rank} checkpoint  (val/wer_greedy={val_wer:.4f})")
-        print(f"  {ckpt_path}")
-        print(f"{'='*60}")
- 
-        ckpt_model = SpeechJEPAForCTC.load_from_checkpoint(
-            ckpt_path,
-            bundle=bundle,
-            pretrained_jepa=pretrained_jepa_model,
-            audio_token_func=audio_token_func,
-            with_decoder=use_decoder_for_asr,
-            lr=cfg.lr,
-            total_steps=cfg.steps,
-            freeze_encoder_updates=cfg.freeze_encoder_updates,
-            use_superb=use_superb,
-            mask_time_prob=cfg.mask_time_prob,
-            mask_feature_prob=cfg.mask_feature_prob,
-            weights_only=False,
-        )
- 
-        ckpt_results: dict[str, float] = {"val_wer_greedy": val_wer.item()}
-        for split_name, split_loader in all_splits.items():
-            split_out = trainer.test(ckpt_model, dataloaders=[split_loader])
-            ckpt_results[split_name] = split_out[0]["test/wer_greedy"]
- 
-        results[f"top_{rank}"] = {"checkpoint": ckpt_path, **ckpt_results}
+    results: dict[str, float] = {}
+    for split_name, split_loader in all_splits.items():
+        split_out = trainer.test(model, dataloaders=[split_loader])
+        results[split_name] = split_out[0]["test/wer_greedy"]
  
     header = (
-        f"{'Rank':<6} {'val_wer':>8} {'dev_other':>10} "
-        f"{'dev_clean':>10} {'test_other':>11} {'test_clean':>11}"
+        f"{'dev_other':>10} {'dev_clean':>10} "
+        f"{'test_other':>11} {'test_clean':>11}"
     )
     print(header)
     print("-" * len(header))
-    for rank, (tag, r) in enumerate(results.items(), start=1):
-        print(
-            f"{rank:<6} "
-            f"{r['val_wer_greedy'] * 100:>7.2f}% "
-            f"{r['dev_other'] * 100:>9.2f}% "
-            f"{r['dev_clean'] * 100:>9.2f}% "
-            f"{r['test_other'] * 100:>10.2f}% "
-            f"{r['test_clean'] * 100:>10.2f}%"
-        )
+    print(
+        f"{results['dev_other'] * 100:>9.2f}% "
+        f"{results['dev_clean'] * 100:>9.2f}% "
+        f"{results['test_other'] * 100:>10.2f}% "
+        f"{results['test_clean'] * 100:>10.2f}%"
+    )
+
+    append_results_csv(results_csv, nr_gpus, pretrain_steps, results)
+    print(f"\nAppended results (nr_gpus={nr_gpus}, steps={pretrain_steps}) to {results_csv}")
  
-    # Best checkpoint WER returned to Ax as the optimisation objective
-    best_ckpt_path, best_val_wer = ranked[0]
-    print(f"\nBest checkpoint : {best_ckpt_path}  (val/wer_greedy={best_val_wer:.4f})")
- 
-    return best_val_wer.item()
+    # dev-other WER returned to Ax as the optimisation objective
+    return results["dev_other"]
 
 
 def load_model(cfg):
@@ -258,6 +282,26 @@ def main(cfg: DictConfig) -> float:
     Returns dev-other WER.  When running with the Ax sweeper this value is
     used as the optimisation objective (minimise).
     """
+    nr_gpus, pretrain_steps = parse_run_meta(cfg.model_path)
+    dry_run = bool(OmegaConf.select(cfg, "dry_run", default=False))
+    results_csv = OmegaConf.select(cfg, "results_csv", default="sweep_results.csv")
+
+    if dry_run:
+        print("=" * 70)
+        print("DRY RUN — no model is loaded and no training is performed")
+        print("=" * 70)
+        print("Resolved config:")
+        print(OmegaConf.to_yaml(cfg))
+        print("-" * 70)
+        print(f"model_path       : {cfg.model_path}")
+        print(f"  exists?        : {os.path.exists(cfg.model_path)}")
+        print(f"  parsed nr_gpus : {nr_gpus}")
+        print(f"  parsed steps   : {pretrain_steps}")
+        print(f"results_csv      : {results_csv}")
+        print(f"finetune devices : {cfg.num_gpus}   total_steps : {cfg.steps}")
+        print("=" * 70)
+        return 0.0
+
     model = load_model(cfg)
     dev_other_wer = train_librilight(
         pretrained_jepa_model=model,
@@ -266,6 +310,9 @@ def main(cfg: DictConfig) -> float:
         train=cfg.manifest,
         use_decoder_for_asr=cfg.use_decoder_for_asr,
         use_superb=cfg.use_superb,
+        nr_gpus=nr_gpus,
+        pretrain_steps=pretrain_steps,
+        results_csv=results_csv,
     )
     return dev_other_wer
  

@@ -337,6 +337,7 @@ class JEPA(pl.LightningModule):
 
         # Initialize clean_scene unconditionally
         clean_scene = batch["audio"]
+        print(clean_scene.shape)
         # Add channel dimension to the final audio as well.
         if clean_scene.ndim != 3:
             clean_scene = clean_scene.unsqueeze(1)
