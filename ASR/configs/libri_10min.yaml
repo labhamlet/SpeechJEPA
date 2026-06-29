@@ -16,12 +16,11 @@ acc_grad_batches : 1
 num_gpus: 1
 
 #Masking Config
-mask_time_prob: 0.65 
-mask_feature_prob: 0.256
-
-# Regularizer
-dropout: 0.0
-layer_drop: 0.1
+mask_time_prob: 0.065
+mask_feature_prob: 0.004
+ 
+dropout : 0.1
+layer_drop : 0.05
 activation_dropout: 0.1
-attn_dropout: 0.0
-hidden_dropout: 0.0
+attn_dropout : 0.1
+hidden_dropout : 0.1

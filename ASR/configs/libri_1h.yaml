@@ -3,7 +3,7 @@ manifest: 1h.txt
 root_dir: librispeech_finetuning/1h
 
 # Model
-model_path: /gpfs/work5/0/prjs1261/speech_jepa/Rope=True/ConvPos=True/Data=LibriSpeech/EMA=0.999/EMAEnd=0.99999/EMASteps=100000/DecoderNR=3/DecoderEmbed=384/MaxBatchSize=6000000/NrGPUs=1/LR=0.0004/LRWarmup=15000/TargetProb=0.2/TargetLen=5/MinContextBlock=5/ContextRatio=0.4/step=150000-v1.ckpt
+model_path: /gpfs/work4/0/prjs1338/saved_models_speech_jepa_d2v2_like/RopeEncoder=True/RopeDecoder=True/KernelDropEncoder=True/KernelDropDecoder=True/Data=LibriSpeech/EMA=0.999/EMAEnd=0.99999/EMASteps=100000/DecoderNR=3/DecoderEmbed=384/MaxBatchSize=6000000/NrGPUs=4/LR=0.0004/LRWarmup=100000/TargetProb=0.15/TargetLen=10/MinContextBlock=5/ContextRatio=0.5/step=370000.ckpt
 use_decoder_for_asr: false
 use_superb: false
 
@@ -15,14 +15,12 @@ max_tokens: 7680000
 acc_grad_batches : 1
 num_gpus: 1
 
-
 #Masking Config
-mask_time_prob: 0.75 
-mask_feature_prob: 0.256
-
-# Regularizer
-dropout: 0.0
-layer_drop: 0.1
+mask_time_prob: 0.065
+mask_feature_prob: 0.004
+ 
+dropout : 0.1
+layer_drop : 0.05
 activation_dropout: 0.1
-attn_dropout: 0.0
-hidden_dropout: 0.0
+attn_dropout : 0.1
+hidden_dropout : 0.1

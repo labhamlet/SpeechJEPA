@@ -168,11 +168,11 @@ def setup_callbacks(cfg):
 
 def setup_trainer(cfg, logger, callbacks) -> pl.Trainer:
     """Set up PyTorch Lightning trainer with proper configuration."""
-    num_gpus = int(cfg.trainer.num_gpus)
-    if num_gpus > 1:
-        strategy = DDPStrategy(static_graph=False, find_unused_parameters=False)
-    else:
-        strategy = "auto"
+    num_gpus  = int(cfg.trainer.num_gpus)
+    num_nodes = int(cfg.trainer.num_nodes)      # plumb this
+    world = num_gpus * num_nodes
+    strategy = DDPStrategy(static_graph=True, find_unused_parameters=False) if world > 1 else "auto"
+    num_nodes=num_nodes
     return pl.Trainer(
         logger=logger,
         accelerator=cfg.trainer.accelerator,
@@ -183,7 +183,7 @@ def setup_trainer(cfg, logger, callbacks) -> pl.Trainer:
         callbacks=callbacks,
         log_every_n_steps=1,
         check_val_every_n_epoch=100,
-        num_nodes=1,
+        num_nodes=num_nodes,
         use_distributed_sampler=False,
         devices=num_gpus,
         strategy=strategy
@@ -253,6 +253,4 @@ def main(cfg):
 
 
 if __name__ == "__main__":
-    cleanup_memory()  # Clean up before starting
     main()
-    cleanup_memory()  # Clean up after finishing

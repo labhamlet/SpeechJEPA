@@ -211,6 +211,7 @@ def train_librilight(
 
 
 def load_model(cfg):
+    print(cfg.model_path)
     weights = torch.load(
         cfg.model_path,
         weights_only=False,

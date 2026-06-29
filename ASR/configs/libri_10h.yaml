@@ -17,13 +17,18 @@ num_gpus: 1
 
 
 #Masking Config
-mask_time_prob: 0.75 
-mask_feature_prob: 0.256
+mask_time_prob: 0.065
+mask_feature_prob: 0.004
 
 # Regularizer
-dropout: 0.0
-layer_drop: 0.1
-activation_dropout: 0.1
-attn_dropout: 0.0
-hidden_dropout: 0.0
+# dropout: 0.1
+# layer_drop: 0.1
+# activation_dropout: 0.1
+# attn_dropout: 0.0
+# hidden_dropout: 0.0
  
+dropout : 0.1
+layer_drop : 0.05
+activation_dropout: 0.1
+attn_dropout : 0.1
+hidden_dropout : 0.1

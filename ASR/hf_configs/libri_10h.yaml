@@ -3,7 +3,7 @@ manifest: 10h.txt
 root_dir: librispeech_finetuning
 
 # Model
-model_name_or_path: facebook/hubert-base-ls960
+model_name_or_path: facebook/hubert-base
 
 # Training hyperparameters
 lr: 1e-4
@@ -16,16 +16,16 @@ num_gpus: 1
 num_workers: 6
 
 # Masking config (SpecAugment)
-mask_time_prob: 0.75
+mask_time_prob: 0.065
 mask_time_length: 10
 mask_time_min_masks: 2
-mask_feature_prob: 0.256
+mask_feature_prob: 0.004
 mask_feature_length: 64
 mask_feature_min_masks: 0
 
 # Regularizer
-layer_drop: 0.1
+layer_drop: 0.05
 activation_dropout: 0.1
-hidden_dropout: 0.0
-attention_dropout: 0.0
-lm_dropout: 0.0
+hidden_dropout: 0.1
+attention_dropout: 0.1
+lm_dropout: 0.05
