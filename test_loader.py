@@ -7,10 +7,11 @@ Three independent checks for multi-node / multi-worker WebDataset SSL training.
   cuda   (point 2) Does a top-level torch.cuda.empty_cache() (as in your
                    cleanup_memory()) actually create a CUDA context, and does
                    every rank land on its OWN physical GPU (no piling on GPU 0)?
-  shards (point 3) Are DataLoader workers FORKED (not spawned), is the process
-                   group visible INSIDE workers, and does resampled=True give
-                   every (rank, worker) a DISTINCT shard stream (no cross-rank
-                   or cross-worker duplication)?
+  shards (point 3) Are DataLoader workers FORKED, is the process group visible
+                   INSIDE workers, does resampled+split give every (rank,worker)
+                   a DISTINCT shard stream, are shards PRE-SHUFFLED (many speakers
+                   per shard), how DIVERSE is a batch end-to-end, and what is the
+                   DUPLICATE rate within/across ranks?
   ram              Does bucket_limits=True actually collapse padded-tensor shape
                    variety (-> allocator fragmentation + torch.compile recompiles)
                    and lower peak host RSS, vs bucket_limits=False -- and what
@@ -181,18 +182,62 @@ def _expand(shards):
     return expand_urls(shards)
 
 
+SHARD_TEST_SEED = 1234
+
+
+def _seed_like_training(seed):
+    """Same base seed on EVERY rank, mirroring seed_everything(seed, workers=True)."""
+    try:
+        import pytorch_lightning as pl
+        pl.seed_everything(seed, workers=True)
+        return
+    except Exception:  # noqa: BLE001
+        import random
+        random.seed(seed)
+        torch.manual_seed(seed)
+
+
+def _make_worker_init(rank):
+    """Rank-aware worker seeding matching Lightning's pl_worker_init_function, so
+    workers on different ranks get different RNG state from one shared base seed."""
+    def _init(worker_id):
+        for modpath in ("lightning_fabric.utilities.seed",
+                        "pytorch_lightning.utilities.seed"):
+            try:
+                mod = __import__(modpath, fromlist=["pl_worker_init_function"])
+                fn = getattr(mod, "pl_worker_init_function")
+                try:
+                    fn(worker_id, rank)
+                except TypeError:
+                    fn(worker_id)               # older signature reads RANK from env
+                return
+            except Exception:  # noqa: BLE001
+                continue
+        torch.manual_seed((torch.initial_seed() % (2 ** 31)) + 100003 * rank + worker_id)
+    return _init
+
+
+def _splitters():
+    from webdataset.shardlists import split_by_node, split_by_worker
+    return split_by_node, split_by_worker
+
+
 class _ShardDrawProbe(torch.utils.data.IterableDataset):
     """Taps WebDataset's raw shard SAMPLING stream (no tar I/O).
 
-    This is the key fix over the naive probe: reading actual samples makes a
-    worker stream one whole shard before the next, so with a short probe every
-    worker looks like it only ever saw ONE shard. Sampling shard URLs directly
-    tests the per-worker/per-rank RNG independently of how many utterances a
-    shard holds.
+    Reading actual samples makes a worker stream one whole shard before the
+    next, so a short probe makes every worker look like it saw ONE shard.
+    Sampling shard URLs directly tests the per-(rank, worker) RNG independently
+    of shard size.
+
+    When mirror_split=True the stream is passed through split_by_node ->
+    split_by_worker, i.e. the EXACT distribution your training pipeline uses
+    once the nodesplitter is restored. That is the config we actually ship, so
+    that is what the cross-rank check should exercise.
     """
 
-    def __init__(self, shards, n_draws):
-        self.shards, self.n_draws = shards, n_draws
+    def __init__(self, shards, n_draws, mirror_split=True):
+        self.shards, self.n_draws, self.mirror_split = shards, n_draws, mirror_split
 
     def __iter__(self):
         try:
@@ -207,26 +252,75 @@ class _ShardDrawProbe(torch.utils.data.IterableDataset):
             "start_method": mp.get_start_method(allow_none=True) or "unknown",
             "dist_in_worker": di,
         }
-        for k, d in enumerate(ResampledShards(_expand(self.shards))):
+        src = ResampledShards(_expand(self.shards))
+        if self.mirror_split:
+            split_by_node, split_by_worker = _splitters()
+            src = split_by_node(src)        # reads dist.get_rank(); no-op if world==1
+            src = split_by_worker(src)      # reads worker_info; no-op if 1 worker
+        for k, d in enumerate(src):
             if k >= self.n_draws:
                 break
             yield {**meta, "url": d["url"]}
 
 
+def _speaker(key):
+    """LibriSpeech __key__ is '<speaker>-<chapter>-<utt>'. Falls back to the
+    whole key if it has no '-'."""
+    return key.split("-", 1)[0]
+
+
 def _read_order_probe(shards):
-    """Reads ACTUAL samples (no decode) to measure how long the stream stays
-    inside a single shard -- i.e. how correlated consecutive batches are."""
+    """Reads ACTUAL samples (no decode, NO shuffle) to characterize the raw
+    shard layout: how long the stream stays inside one shard, and -- the part
+    that verifies the OFFLINE reshuffle -- how many distinct speakers live
+    inside a single shard. Pre-shuffled shards => many speakers per shard;
+    speaker-sorted shards => 1-2.
+
+    Passes nodesplitter=split_by_node so it does not trip the multi-node guard.
+    """
     import webdataset as wds
+    split_by_node, _ = _splitters()
 
     def tag(s):
         wi = torch.utils.data.get_worker_info()
-        return {"worker": wi.id if wi else -1, "url": s.get("__url__", "?")}
+        return {"worker": wi.id if wi else -1,
+                "url": s.get("__url__", "?"),
+                "key": s.get("__key__", "?")}
 
     return wds.WebDataset(shards, resampled=True, shardshuffle=False,
+                          nodesplitter=split_by_node,
                           handler=wds.warn_and_continue).map(tag)
 
 
-def check_shards(rank, world, pg, shards, num_workers, draws_per_worker, order_samples):
+def _faithful_key_probe(shards, shuffle_buffer):
+    """Mirrors the TRAINING pipeline through the shuffle stage, reading only
+    __key__ (no audio decode). Construction matches make_web_dataset:
+    resampled + split_by_node + split_by_worker + .shuffle(N).
+
+    We map to {key,url,worker} BEFORE .shuffle so the buffer stays light --
+    the emitted KEY ORDER is identical either way (shuffle permutes by buffer
+    position, not by payload), so this is faithful for measuring batch
+    composition while costing a fraction of the RAM.
+    """
+    import webdataset as wds
+    split_by_node, split_by_worker = _splitters()
+
+    def to_meta(s):
+        wi = torch.utils.data.get_worker_info()
+        return {"key": s.get("__key__", "?"), "url": s.get("__url__", "?"),
+                "worker": wi.id if wi else -1}
+
+    return (
+        wds.WebDataset(shards, resampled=True, shardshuffle=False,
+                       nodesplitter=split_by_node, workersplitter=split_by_worker,
+                       handler=wds.warn_and_continue)
+        .map(to_meta)
+        .shuffle(shuffle_buffer)
+    )
+
+
+def check_shards(rank, world, pg, shards, num_workers, draws_per_worker, order_samples,
+                 shuffle_buffer, batch_utts, div_samples):
     if shards is None:
         print(f"[shards][rank {rank}] --shards not provided; skipping.", flush=True)
         return
@@ -238,9 +332,15 @@ def check_shards(rank, world, pg, shards, num_workers, draws_per_worker, order_s
               f"If this count is way too low, your pattern is wrong.", flush=True)
 
     # ---- Part A: SEEDING via raw shard draws (shard-size independent) -------
-    probe = _ShardDrawProbe(shards, draws_per_worker)
+    # Reproduce training's seeding EXACTLY, or this test passes for the wrong
+    # reason: seed_everything gives every rank the SAME base seed, and Lightning's
+    # worker_init folds the rank back in. If we skipped this, each process would
+    # get a random seed and ranks would diverge trivially -- hiding real bugs.
+    _seed_like_training(SHARD_TEST_SEED)
+    probe = _ShardDrawProbe(shards, draws_per_worker, mirror_split=True)
     loader = DataLoader(probe, batch_size=None, num_workers=num_workers,
-                        prefetch_factor=(2 if num_workers > 0 else None))
+                        prefetch_factor=(2 if num_workers > 0 else None),
+                        worker_init_fn=_make_worker_init(rank))
     per_worker, start_methods, dist_flags, ranks_seen = defaultdict(list), set(), set(), set()
     for s in loader:
         per_worker[s["worker"]].append(s["url"])
@@ -283,12 +383,17 @@ def check_shards(rank, world, pg, shards, num_workers, draws_per_worker, order_s
               f"`srun -N>=2 --ntasks-per-node>=1` with --rendezvous-dir on shared FS.",
               flush=True)
 
-    # ---- Part B: ORDERING -- how long does the stream stay in one shard? ----
+
     order = _read_order_probe(shards)
     oloader = DataLoader(order, batch_size=None, num_workers=1, prefetch_factor=2)
     last, run, max_run, switches, total = None, 0, 0, 0, 0
+    first_shard_url, first_shard_spk = None, set()
     for s in oloader:
-        u = s["url"]
+        u, k = s["url"], s["key"]
+        if first_shard_url is None:
+            first_shard_url = u
+        if u == first_shard_url:
+            first_shard_spk.add(_speaker(k))
         if u == last:
             run += 1
         else:
@@ -298,10 +403,78 @@ def check_shards(rank, world, pg, shards, num_workers, draws_per_worker, order_s
         if total >= order_samples:
             break
     max_run = max(max_run, run)
-    print(f"[shards][rank {rank}] ORDER: over {total} consecutive samples (single worker), "
-          f"longest single-shard run={max_run}, shard switches={switches}. "
-          f"A long run => each batch is dominated by one shard (same speakers/chapters). "
-          f"You have NO sample-level .shuffle() -- add one (see notes).", flush=True)
+    verdict = ("GOOD: shards are pre-shuffled" if len(first_shard_spk) >= 50
+               else "BAD: shards are speaker-sorted -- rebuild with a global shuffle")
+    print(f"[shards][rank {rank}] WITHIN-SHARD: longest single-shard run={max_run}, "
+          f"shard switches={switches}; first shard holds {len(first_shard_spk)} distinct "
+          f"speakers. {verdict}.", flush=True)
+
+    _seed_like_training(SHARD_TEST_SEED)
+    fk = _faithful_key_probe(shards, shuffle_buffer)
+    floader = DataLoader(fk, batch_size=None, num_workers=num_workers,
+                         prefetch_factor=(2 if num_workers > 0 else None),
+                         worker_init_fn=_make_worker_init(rank))
+    keys_by_worker = defaultdict(list)
+    budget = num_workers * div_samples if num_workers > 0 else div_samples
+    for n, s in enumerate(floader):
+        keys_by_worker[s["worker"]].append(s["key"])
+        if n + 1 >= budget:
+            break
+
+    # C1 -- batch diversity: distinct speakers per window of `batch_utts`
+    ratios, ex_distinct = [], None
+    for w, keys in keys_by_worker.items():
+        for i in range(0, len(keys) - batch_utts + 1, batch_utts):
+            window = keys[i:i + batch_utts]
+            d = len({_speaker(k) for k in window})
+            ratios.append(d / batch_utts)
+            if ex_distinct is None:
+                ex_distinct = d
+    mean_ratio = sum(ratios) / len(ratios) if ratios else 0.0
+    print(f"[shards][rank {rank}] DIVERSITY: a batch of ~{batch_utts} utts holds "
+          f"~{mean_ratio * batch_utts:.1f} distinct speakers on average "
+          f"(ratio {mean_ratio:.2f}; 1.00=every utt a different speaker). "
+          f"Low ratio => shrink shards or raise --shuffle-buffer.", flush=True)
+
+    # C2 -- duplicates within this rank
+    all_keys = [k for ks in keys_by_worker.values() for k in ks]
+    n_keys = len(all_keys)
+    intra = sum(len(ks) - len(set(ks)) for ks in keys_by_worker.values())
+    seen_in = defaultdict(set)
+    for w, ks in keys_by_worker.items():
+        for k in set(ks):
+            seen_in[k].add(w)
+    cross_worker = sum(1 for k, ws in seen_in.items() if len(ws) > 1)
+    print(f"[shards][rank {rank}] DUPLICATES (within rank, {n_keys} draws): "
+          f"intra-worker repeats={intra} ({100 * intra / max(n_keys, 1):.1f}%), "
+          f"utts seen by >1 worker={cross_worker}. "
+          f"Low single-digit % is NORMAL for resampled=True (sampling with "
+          f"replacement); near-total overlap would mean identical streams.",
+          flush=True)
+
+    # C2 -- duplicates ACROSS ranks (the one that wastes DDP compute if broken)
+    if pg:
+        my_set = set(all_keys)
+        gathered = [None] * world
+        dist.all_gather_object(gathered, {"rank": rank, "keys": list(my_set),
+                                           "n": len(my_set)})
+        if rank == 0:
+            from collections import Counter as _C
+            rank_count = _C()
+            for g in gathered:
+                for k in g["keys"]:
+                    rank_count[k] += 1
+            shared = sum(1 for k, c in rank_count.items() if c > 1)
+            total_distinct = len(rank_count)
+            sigs = [hashlib.md5("|".join(sorted(g["keys"])).encode()).hexdigest()[:10]
+                    for g in gathered]
+            distinct_streams = len(set(sigs)) == world
+            print(f"[shards][SUMMARY] CROSS-RANK utterances: {shared}/{total_distinct} "
+                  f"({100 * shared / max(total_distinct, 1):.1f}%) appear on >1 rank; "
+                  f"per-rank key-streams distinct={distinct_streams}. "
+                  f"Single-digit %% + distinct=True is healthy resampling; "
+                  f"~100%% would mean ranks process the SAME data (wasted compute).",
+                  flush=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -427,14 +600,20 @@ def main():
     ap.add_argument("--checks", default="all", help="comma list of: cuda,shards,ram | all")
     ap.add_argument("--shards", default=None, help="same brace pattern/list as training")
     ap.add_argument("--rendezvous-dir", default=None, help="shared-FS dir for cross-rank gather")
-    ap.add_argument("--num-workers", type=int, default=16)
+    ap.add_argument("--num-workers", type=int, default=8)
     ap.add_argument("--draws-per-worker", type=int, default=500,
                     help="shard URLs sampled per worker for the seeding test")
     ap.add_argument("--order-samples", type=int, default=3000,
-                    help="consecutive samples read to measure single-shard run length")
+                    help="consecutive samples read to measure within-shard diversity")
+    ap.add_argument("--shuffle-buffer", type=int, default=2000,
+                    help="runtime .shuffle(N) buffer to mirror (match your data module)")
+    ap.add_argument("--batch-utts", type=int, default=128,
+                    help="approx utterances per batch, for the diversity window")
+    ap.add_argument("--div-samples", type=int, default=4000,
+                    help="post-shuffle samples per worker for diversity/duplicate stats")
     # RAM knobs (defaults mirror your config)
-    ap.add_argument("--target-numel", type=int, default=6_400_000)
-    ap.add_argument("--max-numel", type=int, default=6_400_000)
+    ap.add_argument("--target-numel", type=int, default=6_000_000)
+    ap.add_argument("--max-numel", type=int, default=6_000_000)
     ap.add_argument("--buffersize", type=int, default=8192)
     ap.add_argument("--min-sample-len", type=int, default=32000)
     ap.add_argument("--max-sample-len", type=int, default=250000)
@@ -456,7 +635,8 @@ def main():
         check_cuda(rank, world, local, pg)
     if "shards" in checks:
         check_shards(rank, world, pg, args.shards, args.num_workers,
-                     args.draws_per_worker, args.order_samples)
+                     args.draws_per_worker, args.order_samples,
+                     args.shuffle_buffer, args.batch_utts, args.div_samples)
     if "ram" in checks and rank == 0:        # single-process; run once on rank 0
         check_ram(args)
 

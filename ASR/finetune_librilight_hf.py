@@ -116,7 +116,7 @@ def train_librilight(cfg: DictConfig) -> float:
         strategy="auto",
         precision="bf16-mixed",
         accumulate_grad_batches=cfg.acc_grad_batches,
-        val_check_interval=1000 * cfg.acc_grad_batches,
+        val_check_interval=cfg.check_val_every_n_steps * cfg.acc_grad_batches,
         check_val_every_n_epoch=None,
         callbacks=[
             LearningRateMonitor(logging_interval="step"),

@@ -1,6 +1,6 @@
 # Data
-manifest: 1h.txt
-root_dir: librispeech_finetuning/1h
+manifest: 10min.txt
+root_dir: librispeech_finetuning
 
 # Model
 model_name_or_path: facebook/wav2vec2-base

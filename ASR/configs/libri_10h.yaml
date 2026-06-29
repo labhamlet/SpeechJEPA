@@ -11,6 +11,8 @@ use_superb: false
 lr: 1e-4
 steps: 20000
 freeze_encoder_updates: 10000
+check_val_every_n_steps: 1000
+
 max_tokens: 7680000
 acc_grad_batches : 1
 num_gpus: 1

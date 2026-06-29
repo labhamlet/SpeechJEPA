@@ -130,7 +130,7 @@ def train_librilight(
         accelerator="gpu",
         max_epochs=-1,
         precision="bf16-mixed",
-        val_check_interval=1000 * cfg.acc_grad_batches,
+        val_check_interval=cfg.check_val_every_n_steps * cfg.acc_grad_batches,
         accumulate_grad_batches= cfg.acc_grad_batches,
         callbacks=[
             LearningRateMonitor(logging_interval="step"),
