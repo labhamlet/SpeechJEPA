@@ -1,4 +1,5 @@
-data_dir: "/projects/0/prjs1261/librispeech_raw/wds/shard-{000000..000140}.tar"
+manifest: "/projects/prjs1261/librispeech_raw/manifests/manifest.txt"
+root_dir: "/projects/prjs1261/librispeech_raw/LibriSpeech"
 sr : 16000
 original_sr: 16000
 in_channels: 1
@@ -8,5 +9,5 @@ max_batch_size: 6000000
 target_batch_size: 6000000
 loudness_normalize: False
 bucket_limits : False
-name : LibriSpeech
+name : LibriSpeechIterable
         

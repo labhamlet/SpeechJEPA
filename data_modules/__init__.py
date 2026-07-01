@@ -1,1 +1,1 @@
-from .LibriIterableData import SSLDataModule as SSLDataModule 
+from .LibriDataModule import SSLDataModule as SSLDataModule 

@@ -17,6 +17,7 @@ from speech_jepa.jepa import JEPA
 
 from speech_jepa.extractors import ConvFeatureExtractor 
 from speech_jepa.types import TransformerEncoderCFG, TransformerLayerCFG
+from speech_jepa.modules import D2vDecoderConfig
 
 from pytorch_lightning import seed_everything
 
@@ -227,6 +228,7 @@ def load_model(cfg):
                 feature_extractor=extractor,
                 transformer_encoder_layers_cfg = TransformerLayerCFG.create(),
                 transformer_encoder_cfg = TransformerEncoderCFG.create(),
+                conv_decoder_cfg = D2vDecoderConfig(decoder_groups=cfg.decoder_groups),
                 resample_sr=16000,
                 size="base",
                 layer_drop = cfg.layer_drop,

@@ -17,6 +17,7 @@ from speech_jepa.jepa import JEPA
 from speech_jepa.masking import SpeechMasker
 from speech_jepa.extractors import ConvFeatureExtractor, Extractor
 from speech_jepa.types import TransformerEncoderCFG, TransformerLayerCFG
+from speech_jepa.modules import D2vDecoderConfig
 import torch.nn as nn
 
 from pytorch_lightning.callbacks import TQDMProgressBar
@@ -114,6 +115,7 @@ class ComponentFactory:
                 feature_extractor=extractor,
                 transformer_encoder_layers_cfg = TransformerLayerCFG.create(**cfg.encoder.transformer_encoder_layers_cfg),
                 transformer_encoder_cfg = TransformerEncoderCFG.create(**cfg.encoder.transformer_encoder_cfg),
+                conv_decoder_cfg = D2vDecoderConfig(**cfg.decoder),
                 lr=cfg.optimizer.lr,
                 ema_decay=cfg.trainer.ema_decay,
                 ema_end_decay=cfg.trainer.ema_end_decay,
@@ -156,7 +158,7 @@ def setup_callbacks(cfg):
         dirpath=f"{cfg.save_dir}/speech_jepa/{identity.replace('_', '/')}",
         filename="{step}",
         verbose=True,
-        every_n_train_steps=10000,
+        every_n_train_steps=25000,
         save_last=True,
         enable_version_counter=True,
         save_top_k=-1,
@@ -208,30 +210,6 @@ def create_data_module(cfg) -> pl.LightningDataModule:
         bucket_limits = cfg.data.bucket_limits,
         pin_memory = True,
     )
-
-# def create_data_module(cfg) -> pl.LightningDataModule:
-#     """Create and configure the data module."""
-#     factory = ComponentFactory()
-#     masker = factory.create_masker(cfg)
-    
-#     # Adapted to map cfg arguments into the new SSLDataModule signature
-#     return SSLDataModule(
-#         masker=masker,
-#         manifest_path=cfg.data.manifest,       # <-- FIXED: changed from manifest_path to manifest
-#         root_dir=cfg.data.get("root_dir", ""), # <-- Will use your YAML's root_dir
-#         min_sample_len=cfg.data.min_sample_len,
-#         max_sample_len=cfg.data.max_sample_len,
-#         target_batch_size=cfg.data.target_batch_size, 
-#         max_batch_size=cfg.data.max_batch_size,
-#         loudness_normalize=cfg.data.loudness_normalize,
-#         conv_kernel=eval(cfg.extractor.conv_kernel),
-#         conv_stride=eval(cfg.extractor.conv_stride),
-#         target_masks_per_context=cfg.masker.target_masks_per_context,
-#         bucket_limits=cfg.data.bucket_limits,
-#         pin_memory=cfg.data.get("pin_memory", True),
-#         num_workers=cfg.data.get("num_workers", 8),
-#         seed=cfg.seed
-#     )
 
 def build_model(cfg) -> torch.nn.Module:
     """Build the complete model with all components."""

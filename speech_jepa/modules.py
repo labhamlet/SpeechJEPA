@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import torch.nn.functional as F
 import random 
 
+from typing import TypedDict
+
 
 class TorchtuneEncoder(nn.Module):
     def __init__(self, d_model: int,
@@ -105,6 +107,7 @@ class TorchtuneEncoder(nn.Module):
 def LayerNorm(normalized_shape, eps=1e-5, elementwise_affine=True, export=False):
     return torch.nn.LayerNorm(normalized_shape, eps, elementwise_affine)
 
+
 @dataclass
 class D2vDecoderConfig:
     decoder_dim: int = 384
@@ -119,7 +122,6 @@ class D2vDecoderConfig:
     decoder_residual: bool = True
     projection_layers: int = 1
     projection_ratio: float = 2.0
-
 
 class DecoderBase(nn.Module):
     decoder_cfg: D2vDecoderConfig

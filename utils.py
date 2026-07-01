@@ -7,9 +7,9 @@ def get_identity_from_cfg(cfg):
         cfg.trainer.get("ema_end_decay"),
         cfg.trainer.get("ema_anneal_end_step")
     )
-    identity += "DecoderNR={}_DecoderEmbed={}_".format(
-        cfg.decoder.get("nr_layers"),
-        cfg.decoder.get("embedding_dim"),
+    identity += "DecoderGroups={}_DecoderLayers={}_".format(
+        cfg.decoder.get("decoder_groups"),
+        cfg.decoder.get("decoder_layers"),
     )    
     identity += "MaxBatchSize={}_NrGPUs={}_LR={}_LRWarmup={}_".format(
         cfg.data.get("max_batch_size"),

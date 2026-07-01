@@ -106,6 +106,7 @@ class JEPA(pl.LightningModule):
         feature_extractor: Extractor,
         transformer_encoder_layers_cfg : TransformerLayerCFG,
         transformer_encoder_cfg : TransformerEncoderCFG,
+        conv_decoder_cfg : D2vDecoderConfig,
         loss_fn: nn.Module = nn.MSELoss(reduction='none'),
         lr: float = 0.0004,
         adam_betas: tuple[float, float] = (0.9, 0.98),        
@@ -169,8 +170,7 @@ class JEPA(pl.LightningModule):
                 layer_drop= kwargs.get("layer_drop", 0.0)
                 )
 
-        self.decoder = Decoder1d(D2vDecoderConfig, input_dim=self.encoder_embedding_dim)
-
+        self.decoder = Decoder1d(conv_decoder_cfg, input_dim=self.encoder_embedding_dim)
         self.post_extraction_mapper : Optional[nn.Module] = nn.Linear(feature_extractor.embedding_dim, self.encoder_embedding_dim)
         self.local_feature_norms : nn.Module = nn.LayerNorm(self.encoder_embedding_dim)
 
@@ -337,7 +337,6 @@ class JEPA(pl.LightningModule):
 
         # Initialize clean_scene unconditionally
         clean_scene = batch["audio"]
-        print(clean_scene.shape)
         # Add channel dimension to the final audio as well.
         if clean_scene.ndim != 3:
             clean_scene = clean_scene.unsqueeze(1)
@@ -429,8 +428,8 @@ class JEPA(pl.LightningModule):
                 teacher_padding_masks) -> ForwardReturn:
         
         # Teacher: Only has padding (no masked targets)
-        teacher_features = self._extract_audio(audio)
-        teacher_features = teacher_features.detach()
+        local_features = self._extract_audio(audio)
+        teacher_features = local_features.detach()
         #Teacher only ignores the padding tokens
         targets = self._forward_teacher(teacher_features, 
                                         padding_mask=teacher_padding_masks)
