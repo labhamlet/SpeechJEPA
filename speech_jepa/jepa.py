@@ -427,24 +427,20 @@ class JEPA(pl.LightningModule):
                 ctx_and_target_masks,
                 teacher_padding_masks) -> ForwardReturn:
         
-        # Teacher: Only has padding (no masked targets)
+        # Extract once; student keeps grads, teacher gets a detached view
         local_features = self._extract_audio(audio)
-        teacher_features = local_features.detach()
-        #Teacher only ignores the padding tokens
-        targets = self._forward_teacher(teacher_features, 
+
+        # Teacher: only ignores padding tokens
+        targets = self._forward_teacher(local_features.detach(), 
                                         padding_mask=teacher_padding_masks)
         
-        # Student: Has both targets (ctx_masks) AND padding
-        local_features = self._extract_audio(audio)
-        #Here student ignroes the padding tokens + non context tokens                                     
+        # Student: ignores padding + non-context tokens
         contextual_features = self.encoder_forward(local_features, src_key_padding_mask=ctx_masks)
-        #Here decoder ignores the padding tokens + non target tokens.
         preds = self.decoder_forward(contextual_features, 
-                                     ctx_masks, 
-                                     padding_mask=teacher_padding_masks,
-                                     nr_targets = target_indices.shape[1], 
-                                     src_key_padding_mask=ctx_and_target_masks)
-        
+                                    ctx_masks, 
+                                    padding_mask=teacher_padding_masks,
+                                    nr_targets=target_indices.shape[1], 
+                                    src_key_padding_mask=ctx_and_target_masks)
 
         loss = self.masked_loss(preds, targets, target_indices)
         return ForwardReturn(
