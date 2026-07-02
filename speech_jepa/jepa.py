@@ -18,7 +18,9 @@ from speech_jepa.types import ForwardReturn, TransformerLayerCFG, TransformerEnc
 
 from speech_jepa.modules import TorchtuneEncoder, Decoder1d, D2vDecoderConfig
 
-
+import torch._dynamo
+torch._dynamo.config.cache_size_limit = 64
+ 
 def collate_fn(batch : List[torch.Tensor]) -> torch.Tensor:
     return batch.flatten(start_dim = 0, end_dim = 1)
 
@@ -122,12 +124,15 @@ class JEPA(pl.LightningModule):
         use_gradient_checkpointing: bool = False,
         compile_modules : bool = False,
         size : str = "base",
+        use_packing : bool = False,
         use_ctx_supervision : bool = False,
         **kwargs : dict[str, Any],
     ):
         
         super().__init__()
         self.sr = resample_sr 
+        self.use_packing = use_packing
+        print(f"Use Packing: {self.use_packing}")
         self.original_sr = original_sr
         self.ema_end_step = ema_anneal_end_step
         self.use_compiled_forward = compile_modules
@@ -241,12 +246,10 @@ class JEPA(pl.LightningModule):
 
 
     def _compile_operations(self):
-        compile_kwargs = {
-            "dynamic": True
-        }
-        self.encoder = torch.compile(self.encoder, **compile_kwargs)
-        self.decoder = torch.compile(self.decoder, **compile_kwargs)
-        self.teacher_encoder = torch.compile(self.teacher_encoder, **compile_kwargs)
+        compile_kwargs = {"dynamic": True}
+        self.encoder.compile(**compile_kwargs)     # in-place: state_dict keys unchanged
+        self.decoder.compile(**compile_kwargs)
+        self._forward_teacher = torch.compile(self._forward_teacher, **compile_kwargs)
 
     def configure_optimizers(self):
         #Got it from Data2Vec2.0 https://github.com/facebookresearch/fairseq/blob/main/examples/data2vec/models/data2vec2.py
@@ -396,7 +399,10 @@ class JEPA(pl.LightningModule):
         
     def training_step(self, batch: torch.Tensor, batch_idx: int) -> ForwardReturn:
         audio, ctx_masks, target_indices, ctx_and_target_masks, teacher_padding_mask = batch
-        out = self(audio, ctx_masks, target_indices, ctx_and_target_masks, teacher_padding_mask)
+        out = self(audio, 
+                   ctx_masks, target_indices, ctx_and_target_masks, 
+                   teacher_padding_mask,
+                   use_packed=self.use_packing)
 
         target_variance = self.compute_var(out["targets"])
         pred_variance = self.compute_var(out["preds"])
@@ -442,7 +448,7 @@ class JEPA(pl.LightningModule):
 
 
     def forward(self, audio, ctx_masks, target_indices, ctx_and_target_masks,
-                teacher_padding_masks, use_packed: bool = True) -> ForwardReturn:
+                teacher_padding_masks, use_packed: bool = False) -> ForwardReturn:
         local_features = self._extract_audio(audio)
         targets = self._forward_teacher(local_features.detach(),
                                         padding_mask=teacher_padding_masks)
@@ -495,9 +501,20 @@ class JEPA(pl.LightningModule):
     def encoder_forward_packed(self, local_features, ctx_mask):
         B, S, E = local_features.shape
         x_ctx, idx, pad = self.pack_context(local_features, ctx_mask)
+ 
+        # Declare varying dims before the compiled call: batch (0) and
+        # packed length (1). Harmless no-ops in eager mode.
+        torch._dynamo.mark_dynamic(x_ctx, 0)
+        torch._dynamo.mark_dynamic(x_ctx, 1)
+        torch._dynamo.mark_dynamic(idx, 0)
+        torch._dynamo.mark_dynamic(idx, 1)
+        torch._dynamo.mark_dynamic(pad, 0)
+        torch._dynamo.mark_dynamic(pad, 1)
+ 
         out = self.encoder(x_ctx, src_key_padding_mask=pad, input_pos=idx)
-
-        # pad rows -> mask token, then scatter; untouched positions stay mask token
+ 
+        # Scatter back eagerly — cheap, and scatter_ on a cloned expand is
+        # exactly the kind of in-place-on-view pattern best kept out of graphs.
         out = torch.where(pad.unsqueeze(-1), self.mask_token.to(out.dtype), out)
         full = self.mask_token.expand(B, S, E).to(out.dtype).clone()
         full.scatter_(1, idx.unsqueeze(-1).expand(-1, -1, E), out)

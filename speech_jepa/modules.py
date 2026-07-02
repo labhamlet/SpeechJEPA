@@ -80,7 +80,7 @@ class TorchtuneEncoder(nn.Module):
             mask = valid_tokens.view(B, 1, S).expand(B, S, S)
 
         for layer in self.layers:
-            if self.training and random.random() < self.layer_drop:
+            if self.layer_drop > 0.0 and self.training and random.random() < self.layer_drop:
                 continue 
             if self.norm_first:
                 normed_x = layer['norm_sa'](x)

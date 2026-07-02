@@ -128,7 +128,8 @@ class ComponentFactory:
                 average_top_k_layers = cfg.trainer.average_top_k_layers,
                 warmup_steps=cfg.trainer.warmup_steps,
                 size = cfg.trainer.get("size", "base"),
-                use_ctx_supervision= cfg.trainer.get("use_ctx_supervision", False)
+                use_ctx_supervision= cfg.trainer.get("use_ctx_supervision", False),
+                use_packing=cfg.trainer.use_packing
             )
         except Exception as e:
             raise RuntimeError(f"Failed to create network instance: {str(e)}")
@@ -155,7 +156,7 @@ def setup_callbacks(cfg):
     identity = get_identity_from_cfg(cfg)
     
     checkpoint_callback = ModelCheckpoint(
-        dirpath=f"{cfg.save_dir}/speech_jepa/{identity.replace('_', '/')}",
+        dirpath=f"{cfg.save_dir}/speech_jepa_compiled/{identity.replace('_', '/')}",
         filename="{step}",
         verbose=True,
         every_n_train_steps=25000,
