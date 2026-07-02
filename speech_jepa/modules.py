@@ -67,7 +67,7 @@ class TorchtuneEncoder(nn.Module):
         self.final_norm = nn.LayerNorm(self.d_model, eps=1e-6) if self.norm_first else nn.Identity()
         self.layer_drop = layer_drop
 
-    def forward(self, x, src_key_padding_mask=None, output_hidden_states=False):
+    def forward(self, x, input_pos = None, src_key_padding_mask=None, output_hidden_states=False):
         B, S, E = x.shape
         states = None 
         if output_hidden_states:
@@ -84,12 +84,12 @@ class TorchtuneEncoder(nn.Module):
                 continue 
             if self.norm_first:
                 normed_x = layer['norm_sa'](x)
-                attn_out = layer['attn'](normed_x, normed_x, mask=mask)
+                attn_out = layer['attn'](normed_x, normed_x, mask=mask, input_pos=input_pos)
                 x = x + self.dropout(attn_out)
                 mlp_out = layer['mlp'](layer['norm_mlp'](x))
                 x = x + self.dropout(mlp_out)
             else: 
-                attn_out = layer['attn'](x, x, mask=mask)
+                attn_out = layer['attn'](x, x, mask=mask, input_pos=input_pos)
                 attn_out = self.dropout(attn_out)
                 x = layer['norm_sa'](x + attn_out)
                 mlp_out = layer['mlp'](x)

@@ -294,6 +294,27 @@ class JEPA(pl.LightningModule):
         return y
 
 
+    def pack_context(self, x, ctx_mask, pad_multiple: int = 64):
+        """
+        x:        (B, S, E) local features
+        ctx_mask: (B, S) True = NOT context (your convention)
+        returns packed tokens, their original positions, and a pad mask
+        """
+        B, S, E = x.shape
+        is_ctx = ~ctx_mask                                   # True = context
+        n_ctx = is_ctx.sum(-1)                               # (B,)
+        L = int(n_ctx.max().item())
+        L = min(S, ((L + pad_multiple - 1) // pad_multiple) * pad_multiple)
+
+        # stable sort: context positions first, original order preserved
+        order = torch.argsort(~is_ctx, dim=-1, stable=True)  # (B, S)
+        idx = order[:, :L]                                   # (B, L) original positions
+        pad = torch.arange(L, device=x.device)[None] >= n_ctx[:, None]  # (B, L) True = pad
+
+        x_ctx = torch.gather(x, 1, idx.unsqueeze(-1).expand(-1, -1, E))
+        x_ctx = x_ctx.masked_fill(pad.unsqueeze(-1), 0.0)    # see warning below
+        return x_ctx, idx, pad
+
     @torch.no_grad()
     def _forward_teacher(self, x : torch.Tensor, padding_mask : torch.Tensor) -> torch.Tensor:
         layer_outputs = []
@@ -420,36 +441,23 @@ class JEPA(pl.LightningModule):
         return local_features
 
 
-    def forward(self, 
-                audio : torch.Tensor, 
-                ctx_masks, 
-                target_indices, 
-                ctx_and_target_masks,
-                teacher_padding_masks) -> ForwardReturn:
-        
-        # Extract once; student keeps grads, teacher gets a detached view
+    def forward(self, audio, ctx_masks, target_indices, ctx_and_target_masks,
+                teacher_padding_masks, use_packed: bool = True) -> ForwardReturn:
         local_features = self._extract_audio(audio)
-
-        # Teacher: only ignores padding tokens
-        targets = self._forward_teacher(local_features.detach(), 
+        targets = self._forward_teacher(local_features.detach(),
                                         padding_mask=teacher_padding_masks)
-        
-        # Student: ignores padding + non-context tokens
-        contextual_features = self.encoder_forward(local_features, src_key_padding_mask=ctx_masks)
-        preds = self.decoder_forward(contextual_features, 
-                                    ctx_masks, 
+        if use_packed:
+            contextual_features = self.encoder_forward_packed(local_features, ctx_masks)
+        else:
+            contextual_features = self.encoder_forward(local_features, src_key_padding_mask=ctx_masks)
+        preds = self.decoder_forward(contextual_features, ctx_masks,
                                     padding_mask=teacher_padding_masks,
-                                    nr_targets=target_indices.shape[1], 
+                                    nr_targets=target_indices.shape[1],
                                     src_key_padding_mask=ctx_and_target_masks)
-
         loss = self.masked_loss(preds, targets, target_indices)
-        return ForwardReturn(
-            local_features=local_features,
-            contextual_features=contextual_features,
-            loss=loss,
-            preds=preds,
-            targets=targets,
-        )
+        return ForwardReturn(local_features=local_features,
+                            contextual_features=contextual_features,
+                            loss=loss, preds=preds, targets=targets)
 
     def decoder_forward(self, 
                         contextual_features, 
@@ -484,6 +492,16 @@ class JEPA(pl.LightningModule):
 
         return contextual_features
 
+    def encoder_forward_packed(self, local_features, ctx_mask):
+        B, S, E = local_features.shape
+        x_ctx, idx, pad = self.pack_context(local_features, ctx_mask)
+        out = self.encoder(x_ctx, src_key_padding_mask=pad, input_pos=idx)
+
+        # pad rows -> mask token, then scatter; untouched positions stay mask token
+        out = torch.where(pad.unsqueeze(-1), self.mask_token.to(out.dtype), out)
+        full = self.mask_token.expand(B, S, E).to(out.dtype).clone()
+        full.scatter_(1, idx.unsqueeze(-1).expand(-1, -1, E), out)
+        return full
     @staticmethod
     def compute_var(y):
         y = y.view(-1, y.size(-1))
