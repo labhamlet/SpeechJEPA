@@ -1,28 +1,41 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torchaudio
-import pytorch_lightning as pl
+import math
 from torch.optim.lr_scheduler import LambdaLR
-from torch.nn.utils.rnn import pad_sequence
-from torchmetrics.text import WordErrorRate
-from torchaudio.models.decoder import ctc_decoder, download_pretrained_files
 
 
+def get_tri_stage_schedule(
+    optimizer,
+    total_steps,
+    phase_ratio=(0.1, 0.4, 0.5),
+    init_lr_scale=0.01,
+    final_lr_scale=0.01,
+):
+    """Tri-stage LR schedule (https://arxiv.org/abs/1904.08779), matching
+    fairseq's `tri_stage`. The optimizer's base LR is treated as the peak LR.
 
-def get_tri_state_schedule(optimizer, total_steps, phase_ratio=(0.1, 0.4, 0.5)):
-    """Matches the exact Wav2Vec 2.0 paper schedule: 10% warmup, 40% hold, 50% decay"""
+      - warmup: rises linearly from init_lr_scale*peak -> peak
+      - hold:   stays at peak
+      - decay:  decays *exponentially* from peak -> final_lr_scale*peak
+      - after:  held at final_lr_scale*peak
+
+    LambdaLR multiplies the base (peak) LR by the factor returned below.
+    """
+    assert abs(sum(phase_ratio) - 1.0) < 1e-8, "phase ratios must sum to 1.0"
+
     warmup_steps = int(phase_ratio[0] * total_steps)
     hold_steps = int(phase_ratio[1] * total_steps)
-    decay_steps = total_steps - warmup_steps - hold_steps
+    decay_steps = total_steps - warmup_steps - hold_steps  # absorbs rounding
+
+    warmup_rate = (1.0 - init_lr_scale) / warmup_steps if warmup_steps > 0 else 0.0
+    decay_factor = -math.log(final_lr_scale) / decay_steps if decay_steps > 0 else 0.0
 
     def lr_lambda(current_step):
-        if current_step < warmup_steps:
-            return float(current_step) / float(max(1, warmup_steps))
-        elif current_step < (warmup_steps + hold_steps):
+        if current_step < warmup_steps:                         # warmup
+            return init_lr_scale + warmup_rate * current_step
+        if current_step < warmup_steps + hold_steps:            # hold
             return 1.0
-        else:
-            step_in_decay = current_step - (warmup_steps + hold_steps)
-            return max(0.0, float(decay_steps - step_in_decay) / float(max(1, decay_steps)))
+        step_in_decay = current_step - warmup_steps - hold_steps
+        if step_in_decay <= decay_steps:                        # exponential decay
+            return math.exp(-decay_factor * step_in_decay)
+        return final_lr_scale                                   # constant tail
 
     return LambdaLR(optimizer, lr_lambda)

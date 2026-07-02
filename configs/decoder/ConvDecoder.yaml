@@ -1,0 +1,12 @@
+decoder_dim: 384
+decoder_groups: 16
+decoder_kernel: 7
+decoder_layers: 4
+input_dropout: 0.0
+
+add_positions_masked: False
+add_positions_all: False
+
+decoder_residual: True
+projection_layers: 1
+projection_ratio: 2.0

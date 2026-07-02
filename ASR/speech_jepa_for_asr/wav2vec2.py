@@ -5,7 +5,7 @@ import pytorch_lightning as pl
 from torchmetrics.text import WordErrorRate
 from torchaudio.models.decoder import ctc_decoder, download_pretrained_files
 from transformers import AutoModel, AutoConfig
-from .utils import get_tri_state_schedule
+from .utils import get_tri_stage_schedule
 import numpy as np 
 
 
@@ -17,10 +17,17 @@ class HuggingFaceASRForCTC(pl.LightningModule):
         lr: float = 1e-4,    
         total_steps: int = 80000,
         freeze_encoder_updates: int = 10000, 
-        mask_time_prob: float = 0.075,
+        mask_time_prob: float = 0.75,      # was 0.075
         mask_time_length: int = 10,
-        mask_feature_prob: float = 0.004,
+        mask_time_min_masks: int = 2,      # added
+        mask_feature_prob: float = 0.256,    # was 0.004
         mask_feature_length: int = 64,
+        mask_feature_min_masks: int = 0,   # added
+        layer_drop : int = 0.1, 
+        activation_dropout: int = 0.1,
+        hidden_dropout: int = 0.0,
+        attention_dropout: int = 0.0,
+        lm_dropout: int = 0.0
     ):
         super().__init__()
         self.save_hyperparameters(ignore=['bundle'])
@@ -32,17 +39,22 @@ class HuggingFaceASRForCTC(pl.LightningModule):
         except ValueError:
             print("Warning: '-' not found in labels! Defaulting pad_token_id to 0.")
             self.pad_token_id = 0        
-        
-
+    
         config = AutoConfig.from_pretrained(
             model_name_or_path,
-            mask_time_prob=mask_time_prob,
-            mask_time_length=mask_time_length,
-            mask_feature_prob=mask_feature_prob,
+            mask_time_prob=mask_time_prob, 
+            mask_time_length=mask_time_length, 
+            mask_time_min_masks=mask_time_min_masks,
+            mask_feature_prob=mask_feature_prob, 
             mask_feature_length=mask_feature_length,
-            apply_spec_augment=True
+            mask_feature_min_masks=mask_feature_min_masks,
+            apply_spec_augment=True,
+            layerdrop=layer_drop, 
+            activation_dropout=activation_dropout,
+            hidden_dropout=hidden_dropout,
+            attention_dropout=attention_dropout,
         )
-        
+        self.dropout = nn.Dropout(lm_dropout)
         self.model = AutoModel.from_pretrained(model_name_or_path, config=config)
         
         # We always want the CNN feature extractor frozen during ASR fine-tuning
@@ -54,7 +66,6 @@ class HuggingFaceASRForCTC(pl.LightningModule):
             self.model.requires_grad_(False)
 
         # Custom Classification CTC Head
-        self.dropout = nn.Dropout(0.05)
         self.lm_head = nn.Linear(config.hidden_size, len(self.labels))
         
         # Separate metrics
@@ -64,6 +75,8 @@ class HuggingFaceASRForCTC(pl.LightningModule):
 
         self.beam_search_dev = None
         self.beam_search_test = None
+
+        self.model.training = True
 
     def prepare_data(self):
         download_pretrained_files("librispeech-4-gram")
@@ -80,6 +93,7 @@ class HuggingFaceASRForCTC(pl.LightningModule):
             # Make sure the CNN feature extractor remains frozen even after unfreezing
             if hasattr(self.model, "freeze_feature_encoder"):
                 self.model.freeze_feature_encoder()
+            self.model.training=True
 
     def _setup_torchaudio_decoder(self, beam_size, lm_weight=2.0, word_score=-1.0):
         return ctc_decoder(
@@ -94,16 +108,17 @@ class HuggingFaceASRForCTC(pl.LightningModule):
             sil_token="|"         
         )
 
-    def forward(self, audio: torch.Tensor, padding_mask: torch.Tensor):
-        
+    def forward(self, audio, padding_mask):
         if audio.ndim == 3 and audio.size(1) == 1:
             audio = audio.squeeze(1)
 
-        outputs = self.model(
-            audio, 
-            attention_mask=padding_mask.long()
-        )
-        
+        model_kwargs = {}
+
+        feat_extract_norm = getattr(self.model.config, "feat_extract_norm", "layer")
+        if feat_extract_norm == "layer":
+            model_kwargs["attention_mask"] = padding_mask.long()
+
+        outputs = self.model(audio, **model_kwargs)
         x = outputs.last_hidden_state
         return self.lm_head(self.dropout(x))
 
@@ -122,6 +137,7 @@ class HuggingFaceASRForCTC(pl.LightningModule):
         return predictions
 
     def training_step(self, batch, batch_idx):
+        self.model.training = True
         audio, labels, padding_mask, text_targets = (
             batch["audio"], batch['labels'], batch["padding_mask"], batch["text"]
         )
@@ -141,15 +157,10 @@ class HuggingFaceASRForCTC(pl.LightningModule):
 
             with torch.backends.cudnn.flags(enabled=False):
                 loss = nn.functional.ctc_loss(
-                    log_probs,
-                    flattened_targets,
-                    input_lengths,
-                    target_lengths,
-                    blank=self.pad_token_id,
-                    reduction="mean", 
-                    zero_infinity=True 
+                    log_probs, flattened_targets, input_lengths, target_lengths,
+                    blank=self.pad_token_id, reduction="sum", zero_infinity=True,
                 )
-
+                loss = loss / audio.size(0)     # normalize by #sentences ≈ sentence_avg=True
             with torch.no_grad():
                 preds = self._greedy_decode(logits.detach().cpu(), input_lengths.cpu())
                 wer = self.train_wer_metric(preds, text_targets)
@@ -160,55 +171,60 @@ class HuggingFaceASRForCTC(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        audio, padding_mask, text_targets = batch["audio"], batch["padding_mask"], batch["text"]
-        
-        logits = self(audio, padding_mask)
-        emissions = nn.functional.log_softmax(logits, dim=-1, dtype=torch.float32).cpu().contiguous()
-        
-        raw_audio_lengths = padding_mask.sum(dim=-1)
-        feat_lengths = self.model._get_feat_extract_output_lengths(raw_audio_lengths)
-        lengths = feat_lengths.cpu().to(torch.int32)
-        
-        beam_results = self.beam_search_dev(emissions, lengths)
-        predictions = [" ".join(res[0].words).strip().upper() for res in beam_results]
-        
-        if batch_idx == 0:
-            print(f"\nPredictions: {predictions[:2]}")
-            print(f"Targets:     {text_targets[:2]}")
-            
-        self.val_wer_metric.update(predictions, text_targets)
+            self.model.training = False
+            audio, padding_mask, text_targets = batch["audio"], batch["padding_mask"], batch["text"]
+
+            logits = self(audio, padding_mask)
+
+            raw_audio_lengths = padding_mask.sum(dim=-1)
+            feat_lengths = self.model._get_feat_extract_output_lengths(raw_audio_lengths).to(torch.long)
+
+            predictions = self._greedy_decode(logits.detach().cpu(), feat_lengths.cpu())
+
+            if batch_idx == 0:
+                print(f"\nPredictions (greedy): {predictions[:2]}")
+                print(f"Targets:              {text_targets[:2]}")
+
+            self.val_wer_metric.update(predictions, text_targets)
 
     def on_validation_epoch_end(self):
         val_wer = self.val_wer_metric.compute()
-        self.log("val/wer_4gram", val_wer, sync_dist=True)
-        self.print(f"\n---> [Step {self.global_step}] Validation WER (4-gram LM): {val_wer * 100:.2f}% <---")
+        self.log("val/wer_greedy", val_wer, sync_dist=True)
+        self.print(f"\n---> [Step {self.global_step}] Validation WER (greedy): {val_wer * 100:.2f}% <---")
         self.val_wer_metric.reset()
 
     def test_step(self, batch, batch_idx):
-        audio, padding_mask, text_targets = batch["audio"], batch["padding_mask"], batch["text"]
-        
-        logits = self(audio, padding_mask)
-        emissions = F.log_softmax(logits, dim=-1).cpu().contiguous()
-        
-        raw_audio_lengths = padding_mask.sum(dim=-1)
-        feat_lengths = self.model._get_feat_extract_output_lengths(raw_audio_lengths)
-        lengths = feat_lengths.cpu().to(torch.int32)
-        
-        beam_results = self.beam_search_test(emissions, lengths)
-        predictions = [" ".join(res[0].words).strip().upper() for res in beam_results]
-        
-        self.test_wer_metric.update(predictions, text_targets)
+            self.model.training = False
+            audio, padding_mask, text_targets = batch["audio"], batch["padding_mask"], batch["text"]
+
+            logits = self(audio, padding_mask)
+
+            raw_audio_lengths = padding_mask.sum(dim=-1)
+            feat_lengths = self.model._get_feat_extract_output_lengths(raw_audio_lengths).to(torch.long)
+
+            predictions = self._greedy_decode(logits.detach().cpu(), feat_lengths.cpu())
+
+            if batch_idx == 0:
+                print(f"\nPredictions (greedy): {predictions[:2]}")
+                print(f"Targets:              {text_targets[:2]}")
+
+            self.test_wer_metric.update(predictions, text_targets)
 
     def on_test_epoch_end(self):
         test_wer = self.test_wer_metric.compute()
-        self.log("test/wer_4gram", test_wer, sync_dist=True)
-        self.print(f"\nFinal Test WER (with 4-gram LM): {test_wer * 100:.2f}%")
+        self.log("test/wer_greedy", test_wer, sync_dist=True)
+        self.print(f"\nFinal Test WER (greedy): {test_wer * 100:.2f}%")
         self.test_wer_metric.reset()
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.lr)
-        scheduler = get_tri_state_schedule(optimizer, total_steps=self.hparams.total_steps)
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "interval": "step"}
-        }
+            optimizer = torch.optim.Adam(
+                self.parameters(),
+                lr=self.hparams.lr,           # 5e-5
+                betas=(0.9, 0.98),            # adam_betas: (0.9,0.98)
+                eps=1e-8                      # adam_eps: 1e-08
+            )
+            scheduler = get_tri_stage_schedule(optimizer, 
+                                               final_lr_scale=0.05,
+                                               total_steps=self.hparams.total_steps)
+            return {"optimizer": optimizer,
+                    "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}

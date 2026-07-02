@@ -1,0 +1,15 @@
+transformer_encoder_layers_cfg:
+  d_model: 768
+  nhead: 12
+  batch_first: true
+  norm_first: false
+  bias: true
+  mlp_ratio: 4.0          # used inside create() to compute dim_feedforward
+  dropout: 0.0
+  activation: gelu        # will be resolved to nn.GELU()
+  layer_norm_eps: 1.0e-6
+
+transformer_encoder_cfg:
+  num_layers: 12
+  enable_nested_tensor: false
+  mask_check: true

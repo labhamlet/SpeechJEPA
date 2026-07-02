@@ -1,0 +1,30 @@
+# Data
+manifest: 100h.txt
+root_dir: /projects/0/prjs1261/librispeech_raw/LibriSpeech
+ 
+# Model
+model_name_or_path: facebook/wav2vec2-base
+
+lr: 3e-5
+steps: 80000
+freeze_encoder_updates: 10000
+check_val_every_n_steps: 10000
+max_tokens: 7680000
+acc_grad_batches: 1
+num_gpus: 1
+num_workers: 6
+
+# Masking config (SpecAugment)
+mask_time_prob: 0.05
+mask_time_length: 10
+mask_time_min_masks: 2
+mask_feature_prob: 0.008
+mask_feature_length: 64
+mask_feature_min_masks: 0
+
+# Regularizer
+lm_dropout : 0.1
+layer_drop : 0.05
+activation_dropout: 0.1
+attention_dropout : 0.1
+hidden_dropout : 0.1

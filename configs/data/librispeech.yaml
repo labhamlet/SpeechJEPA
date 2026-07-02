@@ -1,4 +1,4 @@
-data_dir: "/projects/0/prjs1338/libri/webdataset_output_libri/shard-{000000..000112}.tar"
+data_dir: "/projects/0/prjs1261/librispeech_raw/wds/shard-{000000..000140}.tar"
 sr : 16000
 original_sr: 16000
 in_channels: 1

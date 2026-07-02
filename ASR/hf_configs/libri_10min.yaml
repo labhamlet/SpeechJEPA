@@ -1,0 +1,30 @@
+# Data
+manifest: 10min.txt
+root_dir: librispeech_finetuning
+
+# Model
+model_name_or_path: facebook/wav2vec2-base
+
+# Training hyperparameters
+lr: 3e-4
+steps: 13000
+freeze_encoder_updates: 10000
+max_tokens: 7680000
+acc_grad_batches: 1
+num_gpus: 1
+num_workers: 6
+
+# Masking config (SpecAugment)
+mask_time_prob: 0.065
+mask_time_length: 10
+mask_time_min_masks: 2
+mask_feature_prob: 0.004
+mask_feature_length: 64
+mask_feature_min_masks: 0
+
+# Regularizer
+layer_drop: 0.05
+activation_dropout: 0.1
+hidden_dropout: 0.1
+attention_dropout: 0.1
+lm_dropout: 0.05

@@ -56,7 +56,9 @@ class SSLDataModule(pl.LightningDataModule):
         target_masks_per_context: int = 4,
         bucket_limits: bool = False,
         pin_memory: bool = True,
-        num_workers : int = 16
+        num_workers : int = 8,
+        shuffle_buffer : int = 2000,           # vs 2000 default
+        bucket_buffersize : int = 8192,        # vs 8192 default
     ):
         super().__init__()
         #With compilation, make sure that we compile not too much!
@@ -172,23 +174,26 @@ class SSLDataModule(pl.LightningDataModule):
             bucket_limits=self.bucket_limits
         )
 
+        #Shard instances are already shuffled.
         dataset = (
-            wds.WebDataset(path, 
-                           resampled=True, 
-                            nodesplitter=wds.shardlists.split_by_node,
-                            workersplitter=wds.shardlists.split_by_worker,
-                            shardshuffle=False,
-                           handler=wds.warn_and_continue)
+            wds.WebDataset(
+                path,
+                resampled=True,
+                shardshuffle=False,
+                handler=wds.warn_and_continue,
+                nodesplitter=wds.shardlists.split_by_node,
+                workersplitter=wds.shardlists.split_by_worker,
+            )
+            .shuffle(self.hparams.shuffle_buffer)
             .decode(wds.torch_audio, handler=wds.warn_and_continue)
             .rename(signal="flac")
             .select(lambda x: x["signal"][0].shape[-1] >= self.hparams.min_sample_len)
             .map(self._augment_sample)
-            .repeat()
             .compose(
                 partial(
                     sb.dataio.iterators.dynamic_bucketed_batch,
                     len_key="signal",
-                    buffersize=8192,
+                    buffersize=self.hparams.bucket_buffersize,
                     collate_fn=bound_collate,
                     sampler_kwargs={
                         "target_batch_numel": self.hparams.target_batch_size,
@@ -214,7 +219,7 @@ class SSLDataModule(pl.LightningDataModule):
             batch_size=None,
             pin_memory=False,
             num_workers=self.hparams.num_workers,
-            prefetch_factor=2
+            prefetch_factor=2 if self.hparams.num_workers > 0 else None,
         )
         return loader
     

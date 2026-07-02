@@ -3,7 +3,7 @@ manifest: 10min.txt
 root_dir: librispeech_finetuning
  
 # Model
-model_dir: /gpfs/work4/0/prjs1338/saved_models_speech_jepa_d2v2_like/RopeEncoder=True/RopeDecoder=True/KernelDropEncoder=True/KernelDropDecoder=True/Data=LibriSpeech/EMA=0.999/EMAEnd=0.99999/EMASteps=100000/DecoderNR=3/DecoderEmbed=384/MaxBatchSize=6000000/NrGPUs=4/LR=0.0004/LRWarmup=100000/TargetProb=0.15/TargetLen=10/MinContextBlock=5/ContextRatio=0.5/step=370000.ckpt
+model_path: /gpfs/work4/0/prjs1338/saved_models_speech_jepa_d2v2_like/RopeEncoder=True/RopeDecoder=True/KernelDropEncoder=True/KernelDropDecoder=True/Data=LibriSpeech/EMA=0.999/EMAEnd=0.99999/EMASteps=100000/DecoderNR=3/DecoderEmbed=384/MaxBatchSize=6000000/NrGPUs=4/LR=0.0004/LRWarmup=100000/TargetProb=0.15/TargetLen=10/MinContextBlock=5/ContextRatio=0.5/step=370000.ckpt
 use_decoder_for_asr: false
 use_superb: false
  
@@ -11,12 +11,18 @@ use_superb: false
 lr: 1e-4
 steps: 13000
 freeze_encoder_updates: 10000
-max_tokens: 12800000
-num_gpus : 2
-mask_time_prob: 0.075
-mask_feature_prob: 0.008
+check_val_every_n_steps: 1000
+
+max_tokens: 7680000
+acc_grad_batches : 1
+num_gpus: 1
+
+#Masking Config
+mask_time_prob: 0.065
+mask_feature_prob: 0.004
+ 
 dropout : 0.1
-layerdrop : 0.1
+layer_drop : 0.05
 activation_dropout: 0.1
 attn_dropout : 0.1
 hidden_dropout : 0.1
