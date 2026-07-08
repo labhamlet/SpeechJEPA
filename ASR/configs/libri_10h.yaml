@@ -3,9 +3,10 @@ manifest: 10h.txt
 root_dir: librispeech_finetuning
  
 # Model
-model_path: /gpfs/work5/0/prjs1261/speech_jepa/Rope=True/ConvPos=True/CtxSupervise=False/EMA=0.999/EMAEnd=0.9999/EMASteps=100000/DecoderNR=3/DecoderEmbed=384/MaxBatchSize=6000000/NrGPUs=1/LR=0.0004/LRWarmup=100000/TargetProb=0.175/TargetLen=10/MinContextBlock=5/ContextRatio=0.3/step=30000.ckpt
+model_path: /gpfs/work5/0/prjs1261/speech_jepa_compiled/Data=LibriSpeech/Rope=True/ConvPos=True/EMA=0.999/EMAEnd=0.99999/EMASteps=100000/DecoderGroups=16/DecoderLayers=4/MaxBatchSize=6000000/NrGPUs=1/LR=0.0004/LRWarmup=100000/TargetProb=0.15/TargetLen=10/MinContextBlock=5/ContextRatio=0.5/step=375000.ckpt
 use_decoder_for_asr: false
 use_superb: false
+decoder_groups : 16
  
 # Training hyperparameters
 lr: 1e-4
@@ -22,15 +23,24 @@ num_gpus: 1
 mask_time_prob: 0.065
 mask_feature_prob: 0.004
 
-# Regularizer
-# dropout: 0.1
-# layer_drop: 0.1
-# activation_dropout: 0.1
-# attn_dropout: 0.0
-# hidden_dropout: 0.0
- 
 dropout : 0.1
 layer_drop : 0.05
 activation_dropout: 0.1
 attn_dropout : 0.1
 hidden_dropout : 0.1
+
+transformer_encoder_layers_cfg:
+    d_model: 768
+    nhead: 12
+    batch_first: true
+    norm_first: false
+    bias: true
+    mlp_ratio: 4.0          # used inside create() to compute dim_feedforward
+    dropout: 0.0
+    activation: gelu        # will be resolved to nn.GELU()
+    layer_norm_eps: 1.0e-6
+
+transformer_encoder_cfg:
+    num_layers: 12
+    enable_nested_tensor: false
+    mask_check: true
