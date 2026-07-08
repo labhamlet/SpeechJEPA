@@ -1,46 +1,36 @@
 def get_identity_from_cfg(cfg):
-    identity = "Data={}_Rope={}_ConvPos={}_EMA={}_EMAEnd={}_EMASteps={}_".format(
+    identity = "Data={}_Rope={}_EMA={}_EMAEnd={}_EMASteps={}_".format(
         cfg.data.get("name", "Libri"),
-        cfg.trainer.get("use_rope", True), 
-        cfg.trainer.get("use_conv_pos", True),
+        cfg.trainer.get("use_rope", True),
         cfg.trainer.get("ema_decay"),
         cfg.trainer.get("ema_end_decay"),
-        cfg.trainer.get("ema_anneal_end_step")
+        cfg.trainer.get("ema_anneal_end_step"),
     )
-    identity += "DecoderGroups={}_DecoderLayers={}_".format(
-        cfg.decoder.get("decoder_groups"),
-        cfg.decoder.get("decoder_layers"),
-    )    
-    identity += "MaxBatchSize={}_NrGPUs={}_LR={}_LRWarmup={}_".format(
-        cfg.data.get("max_batch_size"),
-        cfg.trainer.get("num_gpus"),
-        cfg.optimizer.get("lr"),
-        cfg.trainer.get("warmup_steps")
-    )
-    identity += "TargetProb={}_TargetLen={}_MinContextBlock={}_ContextRatio={}".format(
-        cfg.masker.get("target_prob"),
-        cfg.masker.get("target_length"),
-        cfg.masker.get("min_context_len"),
-        cfg.masker.get("ratio_cutoff"),
-    )
-    return identity
+ 
+    # --- conv positional embedding ablation (pos_embedding config group) ---
+    use_conv_pos = cfg.pos_embedding.get("use_conv_pos", False)
+    identity += "ConvPos={}_".format(use_conv_pos)
+    if use_conv_pos:
+        identity += "ConvPosStyle={}_ConvPosWidth={}_ConvPosDepth={}_ConvPosPreLN={}_".format(
+            cfg.pos_embedding.get("style", "d2v2"),
+            cfg.pos_embedding.get("width", 95),
+            cfg.pos_embedding.get("depth", 5),
+            cfg.pos_embedding.get("pre_ln", False),
+        )
+ 
+    # --- decoder ablation (decoder config group) ---
+    decoder_type = cfg.decoder.get("name", "conv")
+    identity += "Decoder={}_".format(decoder_type)
+    if decoder_type == "transformer":
+        identity += "DecoderLayers={}_DecoderDim={}_DecoderHeads={}_".format(
+            cfg.decoder.transformer_decoder_cfg.get("num_layers"),
+            cfg.decoder.transformer_decoder_layers_cfg.get("d_model"),
+            cfg.decoder.transformer_decoder_layers_cfg.get("nhead"),
+        )
+    else:
+        identity += "DecoderLayers={}_DecoderDim={}_".format(
+            cfg.decoder.conv.get("nr_layers"),
+            cfg.decoder.conv.get("embedding_dim"),
+        )
 
-
-def get_identity_from_cfg_denoise(cfg):
-    identity = "Data={}_".format(
-        cfg.data.get("name", None),
-    )
-    identity += "Extractor={}_InSeconds={}_".format(
-        cfg.extractor.name,
-        cfg.data.process_seconds,
-    )
-    identity += "BatchSize={}_NrSamples={}_NrGPUs={}_LR={}_".format(
-        cfg.trainer.get("batch_size"),
-        cfg.data.get("samples_per_audio"),
-        cfg.trainer.get("num_gpus"),
-        cfg.optimizer.get("lr"),
-    )
-    identity += "Alpha={}".format(
-        cfg.trainer.get("alpha", 0.0)
-    )
     return identity

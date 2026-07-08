@@ -101,7 +101,7 @@ class ComponentFactory:
 
     
     @staticmethod
-    def create_network(cfg, extractor : Extractor) -> JEPA:
+    def create_network(cfg, extractor: Extractor) -> JEPA:
         """Create and configure the main network."""
         network_class = NETWORKS.get(cfg.model)
         if network_class is None:
@@ -109,13 +109,40 @@ class ComponentFactory:
                 f"Unknown network type: {cfg.model}. "
                 f"Available networks: {list(NETWORKS.keys())}"
             )
-        
+    
+        decoder_type = cfg.decoder.get("name", "conv")
+        transformer_decoder_layers_cfg = None
+        transformer_decoder_cfg = None
+        if decoder_type == "transformer":
+            transformer_decoder_layers_cfg = TransformerLayerCFG.create(
+                **cfg.decoder.transformer_decoder_layers_cfg
+            )
+            transformer_decoder_cfg = TransformerEncoderCFG.create(
+                **cfg.decoder.transformer_decoder_cfg
+            )
+    
         try:
             return network_class(
                 feature_extractor=extractor,
-                transformer_encoder_layers_cfg = TransformerLayerCFG.create(**cfg.encoder.transformer_encoder_layers_cfg),
-                transformer_encoder_cfg = TransformerEncoderCFG.create(**cfg.encoder.transformer_encoder_cfg),
-                conv_decoder_cfg = D2vDecoderConfig(**cfg.decoder),
+                transformer_encoder_layers_cfg=TransformerLayerCFG.create(
+                    **cfg.encoder.transformer_encoder_layers_cfg
+                ),
+                transformer_encoder_cfg=TransformerEncoderCFG.create(
+                    **cfg.encoder.transformer_encoder_cfg
+                ),
+                conv_decoder_cfg=D2vDecoderConfig(**cfg.decoder.conv) if decoder_type != "transformer" else None,
+                # --- decoder ablation -----------------------------------------
+                decoder_type=decoder_type,
+                transformer_decoder_layers_cfg=transformer_decoder_layers_cfg,
+                transformer_decoder_cfg=transformer_decoder_cfg,
+                # --- conv positional embedding ablation -----------------------
+                use_conv_pos=cfg.pos_embedding.use_conv_pos,
+                conv_pos_style=cfg.pos_embedding.style,
+                conv_pos_width=cfg.pos_embedding.width,
+                conv_pos_depth=cfg.pos_embedding.depth,
+                conv_pos_groups=cfg.pos_embedding.groups,
+                conv_pos_pre_ln=cfg.pos_embedding.pre_ln,
+                # ---------------------------------------------------------------
                 lr=cfg.optimizer.lr,
                 ema_decay=cfg.trainer.ema_decay,
                 ema_end_decay=cfg.trainer.ema_end_decay,
@@ -124,17 +151,16 @@ class ComponentFactory:
                 adam_weight_decay=cfg.optimizer.weight_decay,
                 resample_sr=cfg.data.sr,
                 original_sr=cfg.data.original_sr,
-                compile_modules = cfg.trainer.compile_modules,
-                average_top_k_layers = cfg.trainer.average_top_k_layers,
+                compile_modules=cfg.trainer.compile_modules,
+                average_top_k_layers=cfg.trainer.average_top_k_layers,
                 warmup_steps=cfg.trainer.warmup_steps,
-                size = cfg.trainer.get("size", "base"),
-                use_ctx_supervision= cfg.trainer.get("use_ctx_supervision", False),
-                use_packing=cfg.trainer.use_packing
+                size=cfg.trainer.get("size", "base"),
+                use_ctx_supervision=cfg.trainer.get("use_ctx_supervision", False),
+                use_packing=cfg.trainer.use_packing,
             )
         except Exception as e:
             raise RuntimeError(f"Failed to create network instance: {str(e)}")
-
-
+        
 def setup_logger(cfg) -> WandbLogger:
     """Set up TensorBoard logger with proper configuration."""
     identity = get_identity_from_cfg(cfg)
@@ -156,10 +182,10 @@ def setup_callbacks(cfg):
     identity = get_identity_from_cfg(cfg)
     
     checkpoint_callback = ModelCheckpoint(
-        dirpath=f"{cfg.save_dir}/speech_jepa_compiled/{identity.replace('_', '/')}",
+        dirpath=f"{cfg.save_dir}/speech_jepa_conv_pos/{identity.replace('_', '/')}",
         filename="{step}",
         verbose=True,
-        every_n_train_steps=25000,
+        every_n_train_steps=10000,
         save_last=True,
         enable_version_counter=True,
         save_top_k=-1,

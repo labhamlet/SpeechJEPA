@@ -1,0 +1,9 @@
+# Baseline: no conv positional embedding (RoPE in the encoder only).
+use_conv_pos: false
+
+# Kept so overrides always resolve regardless of the selected variant.
+style: d2v2
+width: 95
+depth: 5
+groups: 16
+pre_ln: false

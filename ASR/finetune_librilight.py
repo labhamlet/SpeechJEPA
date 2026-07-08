@@ -39,7 +39,7 @@ test_other_dir = "LibriSpeech/test-other"
 test_clean_dir = "LibriSpeech/test-clean"
 
 torch.set_float32_matmul_precision('high')
-seed_everything(1234)
+seed_everything(123)
 bundle = torchaudio.pipelines.WAV2VEC2_ASR_BASE_960H
 LABELS = bundle.get_labels()
 conv_cfg = {
@@ -224,11 +224,40 @@ def load_model(cfg):
         in_channels=1,
     )         
 
+
+    decoder_type = cfg.decoder.get("name", "conv")
+    transformer_decoder_layers_cfg = None
+    transformer_decoder_cfg = None
+    if decoder_type == "transformer":
+        transformer_decoder_layers_cfg = TransformerLayerCFG.create(
+            **cfg.transformer_decoder_layers_cfg
+        )
+        transformer_decoder_cfg = TransformerEncoderCFG.create(
+            **cfg.transformer_decoder_cfg
+        )
+
+    
     model = JEPA(
                 feature_extractor=extractor,
-                transformer_encoder_layers_cfg = TransformerLayerCFG.create(),
-                transformer_encoder_cfg = TransformerEncoderCFG.create(),
-                conv_decoder_cfg = D2vDecoderConfig(decoder_groups=cfg.decoder_groups),
+                transformer_encoder_layers_cfg=TransformerLayerCFG.create(
+                    **cfg.transformer_encoder_layers_cfg
+                ),
+                transformer_encoder_cfg=TransformerEncoderCFG.create(
+                    **cfg.transformer_encoder_cfg
+                ),
+                conv_decoder_cfg=D2vDecoderConfig(**cfg.decoder.conv) if decoder_type != "transformer" else None,
+                # --- decoder ablation -----------------------------------------
+                decoder_type=decoder_type,
+                transformer_decoder_layers_cfg=transformer_decoder_layers_cfg,
+                transformer_decoder_cfg=transformer_decoder_cfg,
+                # --- conv positional embedding ablation -----------------------
+                use_conv_pos=cfg.pos_embedding.use_conv_pos,
+                conv_pos_style=cfg.pos_embedding.style,
+                conv_pos_width=cfg.pos_embedding.width,
+                conv_pos_depth=cfg.pos_embedding.depth,
+                conv_pos_groups=cfg.pos_embedding.groups,
+                conv_pos_pre_ln=cfg.pos_embedding.pre_ln,
+
                 resample_sr=16000,
                 size="base",
                 layer_drop = cfg.layer_drop,
@@ -251,7 +280,7 @@ def load_model(cfg):
             new_key = key
         new_state_dict[new_key] = value
 
-    model.load_state_dict(new_state_dict, strict=False)
+    model.load_state_dict(new_state_dict, strict=True)
     return model 
 
 @hydra.main(version_base=None, config_path="./configs", config_name="libri_1h.yaml")

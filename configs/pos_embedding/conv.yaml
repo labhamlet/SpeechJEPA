@@ -1,25 +1,3 @@
-name: transformer
-
-conv:
-  nr_layers: 3
-  embedding_dim: 384
-
-transformer_decoder_layers_cfg:
-  d_model: 384           
-  nhead: 6             
-  batch_first: true
-  norm_first: false      
-  bias: true
-  mlp_ratio: 4.0
-  dropout: 0.0   
-  activation: gelu
-  layer_norm_eps: 1.0e-6
-
-transformer_decoder_cfg:
-  num_layers: 4
-  enable_nested_tensor: false
-  mask_check: true
-
 use_conv_pos: true
 
 style: d2v2     # d2v2 | wav2vec2 (old single weight-normed conv, renormalized masking)

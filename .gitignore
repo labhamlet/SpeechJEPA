@@ -177,3 +177,4 @@ ASR/LibriSpeech
 ASR/librispeech_finetuning
 ASR/create_manifest.py 
 ASR/lightning_logs
+*.out

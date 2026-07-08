@@ -4,10 +4,10 @@ root_dir: librispeech_finetuning/1h
 
 # Model
 # model_path: /gpfs/work5/0/prjs1261/speech_jepa/Rope=True/ConvPos=True/CtxSupervise=False/EMA=0.999/EMAEnd=0.9999/EMASteps=100000/DecoderNR=3/DecoderEmbed=384/MaxBatchSize=6000000/NrGPUs=1/LR=0.0004/LRWarmup=100000/TargetProb=0.175/TargetLen=10/MinContextBlock=5/ContextRatio=0.3/step=370000.ckpt
-model_path: /gpfs/work5/0/prjs1261/speech_jepa/Data=LibriSpeech/Rope=True/ConvPos=True/EMA=0.999/EMAEnd=0.99999/EMASteps=100000/DecoderGroups=1/DecoderLayers=4/MaxBatchSize=6000000/NrGPUs=1/LR=0.0004/LRWarmup=100000/TargetProb=0.15/TargetLen=10/MinContextBlock=5/ContextRatio=0.5/step=125000.ckpt
+model_path: /gpfs/work5/0/prjs1261/speech_jepa_conv_pos/Data=LibriSpeech/Rope=True/EMA=0.999/EMAEnd=0.99999/EMASteps=100000/ConvPos=True/ConvPosStyle=d2v2/ConvPosWidth=95/ConvPosDepth=5/ConvPosPreLN=False/Decoder=transformer/DecoderLayers=4/DecoderDim=384/DecoderHeads=6/step=100000.ckpt
 use_decoder_for_asr: false
 use_superb: false
-decoder_groups : 1
+decoder_groups : 32
 
 # Training hyperparameters
 lr: 3e-4
@@ -27,3 +27,48 @@ layer_drop : 0.05
 activation_dropout: 0.1
 attn_dropout : 0.1
 hidden_dropout : 0.1
+
+
+decoder:
+    name: transformer
+
+transformer_encoder_layers_cfg:
+    d_model: 768
+    nhead: 12
+    batch_first: true
+    norm_first: false
+    bias: true
+    mlp_ratio: 4.0          # used inside create() to compute dim_feedforward
+    dropout: 0.0
+    activation: gelu        # will be resolved to nn.GELU()
+    layer_norm_eps: 1.0e-6
+
+transformer_encoder_cfg:
+    num_layers: 12
+    enable_nested_tensor: false
+    mask_check: true
+
+transformer_decoder_layers_cfg:
+  d_model: 384           
+  nhead: 6             
+  batch_first: true
+  norm_first: false      
+  bias: true
+  mlp_ratio: 4.0
+  dropout: 0.0   
+  activation: gelu
+  layer_norm_eps: 1.0e-6
+
+transformer_decoder_cfg:
+  num_layers: 4
+  enable_nested_tensor: false
+  mask_check: true
+
+pos_embedding:
+    use_conv_pos: true
+
+    style: d2v2     # d2v2 | wav2vec2 (old single weight-normed conv, renormalized masking)
+    width: 95       # d2v2.0 audio default (conv_pos_width) -> per-layer k = max(3, 95//5) = 19
+    depth: 5        # d2v2.0 audio default (conv_pos_depth); ignored for wav2vec2
+    groups: 16      # d2v2.0 audio default (conv_pos_groups)
+    pre_ln: false   # d2v2.0 conv_pos_pre_ln; ignored for wav2vec2

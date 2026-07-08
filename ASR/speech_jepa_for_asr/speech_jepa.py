@@ -189,10 +189,28 @@ class SpeechJEPAForCTC(pl.LightningModule):
         
         self.local_feature_norms = pretrained_jepa.local_feature_norms
         self.encoder = pretrained_jepa.encoder
-        
+
+
+        self.use_conv_pos = getattr(pretrained_jepa, "use_conv_pos", False)
+        self.conv_pos_embedding = getattr(pretrained_jepa, "conv_pos_embedding", None)
+        self.conv_pos_norm = getattr(pretrained_jepa, "conv_pos_norm", None)
+        if self.use_conv_pos:
+            assert self.conv_pos_embedding is not None and self.conv_pos_norm is not None, \
+                "pretrained model has use_conv_pos=True but conv pos modules are missing"
+            print("Downstream ASR with conv positional embeddings "
+                  f"({type(self.conv_pos_embedding).__name__})")
+
+        # ------------------------------------------------------------------
+        # NEW: decoder can now be the conv Decoder1d OR the RoPE transformer
+        # decoder; the transformer variant may come with proj_in/proj_out
+        # when its d_model differs from the encoder dim.
+        # ------------------------------------------------------------------
         if with_decoder:
-            self.decoder = pretrained_jepa.decoder 
-            print("Performing ASR with the decoder")
+            self.decoder = pretrained_jepa.decoder
+            self.decoder_type = getattr(pretrained_jepa, "decoder_type", "conv")
+            self.decoder_proj_in = getattr(pretrained_jepa, "decoder_proj_in", nn.Identity())
+            self.decoder_proj_out = getattr(pretrained_jepa, "decoder_proj_out", nn.Identity())
+            print(f"Performing ASR with the decoder (type={self.decoder_type})")
 
     
         self._get_feat_extract_output_lengths = audio_token_func
@@ -232,9 +250,18 @@ class SpeechJEPAForCTC(pl.LightningModule):
             self.local_feature_norms.eval()
             self.post_extraction_mapper.requires_grad_(False)
             self.post_extraction_mapper.eval()
+            if self.use_conv_pos:
+                self.conv_pos_embedding.requires_grad_(False)
+                self.conv_pos_embedding.eval()
+                self.conv_pos_norm.requires_grad_(False)
+                self.conv_pos_norm.eval()
             if with_decoder:
                 self.decoder.requires_grad_(False)
                 self.decoder.eval()
+                self.decoder_proj_in.requires_grad_(False)
+                self.decoder_proj_in.eval()
+                self.decoder_proj_out.requires_grad_(False)
+                self.decoder_proj_out.eval()
 
         self.decoder_files = download_pretrained_files("librispeech-4-gram")
         self.beam_search_dev = self._setup_torchaudio_decoder(beam_size=50, lm_weight=2.0, word_score=-1.0)
@@ -251,8 +278,13 @@ class SpeechJEPAForCTC(pl.LightningModule):
             self.encoder.eval()
             self.local_feature_norms.eval()
             self.post_extraction_mapper.eval()
+            if self.use_conv_pos:
+                self.conv_pos_embedding.eval()
+                self.conv_pos_norm.eval()
             if self.do_with_decoder:
                 self.decoder.eval()
+                self.decoder_proj_in.eval()
+                self.decoder_proj_out.eval()
         
         if self.global_step == self.hparams.freeze_encoder_updates:
             self.print(f"Unfreezing encoder at step {self.global_step}!")
@@ -265,6 +297,21 @@ class SpeechJEPAForCTC(pl.LightningModule):
             self.audio_feature_norms.requires_grad_(True)
             self.local_feature_norms.requires_grad_(True)
             self.post_extraction_mapper.requires_grad_(True)
+
+            # Conv pos unfreezes with the encoder (HF wav2vec2 convention)
+            if self.use_conv_pos:
+                self.conv_pos_embedding.train()
+                self.conv_pos_embedding.requires_grad_(True)
+                self.conv_pos_norm.train()
+                self.conv_pos_norm.requires_grad_(True)
+            # Decoder (+ projections) unfreezes with the encoder
+            if self.do_with_decoder:
+                self.decoder.train()
+                self.decoder.requires_grad_(True)
+                self.decoder_proj_in.train()
+                self.decoder_proj_in.requires_grad_(True)
+                self.decoder_proj_out.train()
+                self.decoder_proj_out.requires_grad_(True)
 
 
     def _mask_hidden_states(
@@ -317,6 +364,7 @@ class SpeechJEPAForCTC(pl.LightningModule):
         )
 
     def forward(self, audio, attention_mask, padding_mask):
+        # attention_mask: (B, T_tokens) True = PADDED (used as src_key_padding_mask)
         audio = masked_instance_normalize(audio, padding_mask)
 
         with torch.no_grad():
@@ -326,11 +374,24 @@ class SpeechJEPAForCTC(pl.LightningModule):
         x = self.post_extraction_mapper(x)
         x = self.local_feature_norms(x)
         x = self._mask_hidden_states(x, attention_mask=~attention_mask)
+
+        if self.use_conv_pos:
+            x = self.conv_pos_norm(x + self.conv_pos_embedding(x, ~attention_mask))
+
         x = self.hidden_dropout(x)
         x = self.encoder(
             x, 
             src_key_padding_mask=attention_mask,
         )
+
+        if self.do_with_decoder:
+            if self.decoder_type == "transformer":
+                x = self.decoder_proj_in(x)
+                x = self.decoder(x, src_key_padding_mask=attention_mask)
+                x = self.decoder_proj_out(x)
+            else:
+                x = self.decoder(x, ~attention_mask)
+
         return self.lm_head(self.dropout(x))
 
 
