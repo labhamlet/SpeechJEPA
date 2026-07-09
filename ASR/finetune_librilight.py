@@ -39,7 +39,7 @@ test_other_dir = "LibriSpeech/test-other"
 test_clean_dir = "LibriSpeech/test-clean"
 
 torch.set_float32_matmul_precision('high')
-seed_everything(1234)
+seed_everything(12345)
 bundle = torchaudio.pipelines.WAV2VEC2_ASR_BASE_960H
 LABELS = bundle.get_labels()
 conv_cfg = {
@@ -251,7 +251,7 @@ def load_model(cfg):
             new_key = key
         new_state_dict[new_key] = value
 
-    model.load_state_dict(new_state_dict, strict=False)
+    model.load_state_dict(new_state_dict, strict=True)
     return model 
 
 @hydra.main(version_base=None, config_path="./configs", config_name="libri_1h.yaml")
