@@ -304,14 +304,15 @@ class SpeechJEPAForCTC(pl.LightningModule):
                 self.conv_pos_embedding.requires_grad_(True)
                 self.conv_pos_norm.train()
                 self.conv_pos_norm.requires_grad_(True)
-            # Decoder (+ projections) unfreezes with the encoder
+            
+            # Decoder (+ projections) do not unfreeze with the encoder
             if self.do_with_decoder:
-                self.decoder.train()
-                self.decoder.requires_grad_(True)
-                self.decoder_proj_in.train()
-                self.decoder_proj_in.requires_grad_(True)
-                self.decoder_proj_out.train()
-                self.decoder_proj_out.requires_grad_(True)
+                self.decoder.eval()
+                self.decoder.requires_grad_(False)
+                self.decoder_proj_in.eval()
+                self.decoder_proj_in.requires_grad_(False)
+                self.decoder_proj_out.eval()
+                self.decoder_proj_out.requires_grad_(False)
 
 
     def _mask_hidden_states(

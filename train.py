@@ -182,7 +182,7 @@ def setup_callbacks(cfg):
     identity = get_identity_from_cfg(cfg)
     
     checkpoint_callback = ModelCheckpoint(
-        dirpath=f"{cfg.save_dir}/speech_jepa_conv_pos/{identity.replace('_', '/')}",
+        dirpath=f"{cfg.save_dir}/speech_jepa_conv_pos_ablations/{identity.replace('_', '/')}",
         filename="{step}",
         verbose=True,
         every_n_train_steps=10000,

@@ -264,6 +264,8 @@ class JEPA(pl.LightningModule):
                 hidden_dropout=decoder_dropout,
                 layer_drop=0.0,
             )
+            self.decoder_mask_fill = "mask_token"        # NEW
+            self.decoder_mask_noise_std = 0.0            # NEW
             if decoder_d_model != self.encoder_embedding_dim:
                 self.decoder_proj_in = nn.Linear(self.encoder_embedding_dim, decoder_d_model)
                 self.decoder_proj_out = nn.Linear(decoder_d_model, self.encoder_embedding_dim)
@@ -274,6 +276,14 @@ class JEPA(pl.LightningModule):
             self.decoder = Decoder1d(conv_decoder_cfg, input_dim=self.encoder_embedding_dim)
             self.decoder_proj_in = nn.Identity()
             self.decoder_proj_out = nn.Identity()
+            self.decoder_mask_fill = conv_decoder_cfg.mask_fill
+            self.decoder_mask_noise_std = conv_decoder_cfg.mask_noise_std
+            assert self.decoder_mask_fill in ("mask_token", "noise"), \
+                f"mask_fill must be 'mask_token' or 'noise', got {self.decoder_mask_fill}"
+            print(f"Conv decoder: kernel_dropout={conv_decoder_cfg.kernel_dropout}, "
+                  f"mask_fill={self.decoder_mask_fill}"
+                  + (f" (std={self.decoder_mask_noise_std})"
+                     if self.decoder_mask_fill == "noise" else ""))
 
         self.post_extraction_mapper : Optional[nn.Module] = nn.Linear(feature_extractor.embedding_dim, self.encoder_embedding_dim)
         self.local_feature_norms : nn.Module = nn.LayerNorm(self.encoder_embedding_dim)
@@ -630,19 +640,20 @@ class JEPA(pl.LightningModule):
                             contextual_features=contextual_features,
                             loss=loss, preds=preds, targets=targets)
 
-    def decoder_forward(self,
-                        contextual_features,
-                        ctx_mask,
-                        padding_mask,
-                        nr_targets,
-                        src_key_padding_mask=None):
+    def decoder_forward(self, contextual_features, ctx_mask, padding_mask,
+                        nr_targets, src_key_padding_mask=None):
         B, seq_len, E = contextual_features.shape
 
-        # Start from all mask tokens
-        tgt = self.mask_token.expand(B, seq_len, E)                # (B, T, E)
+        if self.decoder_mask_fill == "noise":
+            # NEW: d2v2-style fill — fresh N(0, std) noise instead of a learned token.
+            # No grad, sampled per forward, shared across the N target groups.
+            tgt = contextual_features.new_empty(B, seq_len, E).normal_(
+                0.0, self.decoder_mask_noise_std)
+        else:
+            tgt = self.mask_token.expand(B, seq_len, E)                # (B, T, E)
 
-        # Blend context in via masking
-        ctx_mask_f = (~ctx_mask).unsqueeze(-1).to(contextual_features.dtype)  # (B, T, 1)
+        # Blend context in via masking (unchanged)
+        ctx_mask_f = (~ctx_mask).unsqueeze(-1).to(contextual_features.dtype)
         tgt = tgt * ctx_mask.unsqueeze(-1).to(tgt.dtype) + contextual_features * ctx_mask_f
 
         tgt = repeat(tgt, 'B S E -> (B N) S E', N=nr_targets)

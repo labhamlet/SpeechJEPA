@@ -107,7 +107,6 @@ class TorchtuneEncoder(nn.Module):
 def LayerNorm(normalized_shape, eps=1e-5, elementwise_affine=True, export=False):
     return torch.nn.LayerNorm(normalized_shape, eps, elementwise_affine)
 
-
 @dataclass
 class D2vDecoderConfig:
     decoder_dim: int = 384
@@ -122,6 +121,11 @@ class D2vDecoderConfig:
     decoder_residual: bool = True
     projection_layers: int = 1
     projection_ratio: float = 2.0
+
+    kernel_dropout: bool = True     # NEW: True = masked conv w/ count renorm (current);
+                                    #      False = plain conv over the full seq (d2v2)
+    mask_fill: str = "mask_token"   # NEW: "mask_token" | "noise" — decoder input at non-context positions
+    mask_noise_std: float = 0.01    # NEW: std of the Gaussian fill (d2v2 default), used when mask_fill="noise"
 
 class DecoderBase(nn.Module):
     decoder_cfg: D2vDecoderConfig
@@ -175,8 +179,10 @@ class TransposeLast(nn.Module):
 
 
 class MaskedConv1d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, padding, groups=1):
+    def __init__(self, in_channels, out_channels, kernel_size, padding, groups=1,
+                 kernel_dropout: bool = True):                                  # NEW
         super().__init__()
+        self.kernel_dropout = kernel_dropout                                    # NEW
         self.conv = nn.Conv1d(
             in_channels,
             out_channels,
@@ -185,11 +191,15 @@ class MaskedConv1d(nn.Module):
             groups=groups
         )
 
-    def forward(self, x, mask):
+    def forward(self, x, mask=None):
         """
         x: (B, C, T)
-        mask: (B, T) - Boolean mask where True = Valid, False = Masked
+        mask: (B, T) - Boolean mask where True = Valid, False = Masked.
+              Ignored when kernel_dropout=False (plain d2v2-style conv).
         """
+        if not self.kernel_dropout or mask is None:                             # NEW
+            return self.conv(x)                                                 # NEW
+
         mask_float = mask.unsqueeze(1).type_as(x)
         
         x = x * mask_float
@@ -220,6 +230,7 @@ class MaskedDecoderBlock(nn.Module):
             kernel_size=cfg.decoder_kernel,
             padding=cfg.decoder_kernel // 2,
             groups=cfg.decoder_groups,
+            kernel_dropout=cfg.kernel_dropout,                                  # NEW
         )
         self.pad = SamePad(cfg.decoder_kernel)
         self.transpose_1 = TransposeLast()
