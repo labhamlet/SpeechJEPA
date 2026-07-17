@@ -227,7 +227,7 @@ class SpeechJEPAForCTC(pl.LightningModule):
         self.hidden_dropout = nn.Dropout(0.0)
         self.dropout = nn.Dropout(dropout)
         self.lm_head = nn.Linear(pretrained_jepa.encoder_embedding_dim, len(self.labels))
-        
+
         if self.mask_time_prob > 0.0 or self.mask_feature_prob > 0.0:
             self.masked_spec_embed = nn.Parameter(torch.Tensor(pretrained_jepa.encoder_embedding_dim).uniform_())
         

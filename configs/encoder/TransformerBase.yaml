@@ -1,3 +1,5 @@
+use_rope: true
+
 transformer_encoder_layers_cfg:
   d_model: 768
   nhead: 12

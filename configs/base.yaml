@@ -4,9 +4,9 @@ defaults:
   - trainer: default_trainer
   - extractor: wav2vec2
   - masker: LibriSpeechASR
-  - decoder: TransformerDecoder            # ablation: ConvDecoder | TransformerDecoder
+  - decoder: ConvDecoder
   - encoder: TransformerBase
-  - pos_embedding: conv             # ablation: none | conv
+  - pos_embedding: conv_w2v2
 
 model: JEPA
 save_dir: /projects/0/prjs1261

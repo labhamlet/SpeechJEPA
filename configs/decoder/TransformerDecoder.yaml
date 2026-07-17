@@ -1,9 +1,5 @@
 name: transformer
 
-conv:
-  nr_layers: 3
-  embedding_dim: 384
-
 transformer_decoder_layers_cfg:
   d_model: 384           
   nhead: 6             
@@ -19,11 +15,3 @@ transformer_decoder_cfg:
   num_layers: 4
   enable_nested_tensor: false
   mask_check: true
-
-use_conv_pos: true
-
-style: d2v2     # d2v2 | wav2vec2 (old single weight-normed conv, renormalized masking)
-width: 95       # d2v2.0 audio default (conv_pos_width) -> per-layer k = max(3, 95//5) = 19
-depth: 5        # d2v2.0 audio default (conv_pos_depth); ignored for wav2vec2
-groups: 16      # d2v2.0 audio default (conv_pos_groups)
-pre_ln: false   # d2v2.0 conv_pos_pre_ln; ignored for wav2vec2

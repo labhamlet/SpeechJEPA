@@ -220,7 +220,7 @@ class LibriLightDataModule(pl.LightningDataModule):
             shuffle=False,       
             collate_fn=self.collate_fn,
             num_workers=self.num_workers,
-            persistent_workers=True,
+            persistent_workers=self.num_workers > 0,
             pin_memory=True, 
         )
 
@@ -238,7 +238,7 @@ class LibriLightDataModule(pl.LightningDataModule):
             shuffle=False,       
             collate_fn=self.collate_fn,
             num_workers=self.num_workers,
-            persistent_workers=True,
+            persistent_workers=self.num_workers > 0,
             pin_memory=True, 
         )
 
@@ -257,7 +257,7 @@ class LibriLightDataModule(pl.LightningDataModule):
             shuffle=False,       
             collate_fn=self.collate_fn,
             num_workers=self.num_workers,
-            persistent_workers=True,
+            persistent_workers=self.num_workers > 0,
             pin_memory=True, 
         )
 
@@ -275,7 +275,7 @@ class LibriLightDataModule(pl.LightningDataModule):
             shuffle=False,       
             collate_fn=self.collate_fn,
             num_workers=self.num_workers,
-            persistent_workers=True,
+            persistent_workers=self.num_workers > 0,
             pin_memory=True, 
         )
 
@@ -294,6 +294,6 @@ class LibriLightDataModule(pl.LightningDataModule):
             shuffle=False,       
             collate_fn=self.collate_fn,
             num_workers=self.num_workers,
-            persistent_workers=True,
+            persistent_workers=self.num_workers > 0,
             pin_memory=True, 
         )

@@ -175,6 +175,7 @@ class JEPA(pl.LightningModule):
         transformer_decoder_layers_cfg : Optional[TransformerLayerCFG] = None, # NEW
         transformer_decoder_cfg : Optional[TransformerEncoderCFG] = None,      # NEW
         use_conv_pos: bool = False,                       # NEW
+        use_rope: bool = True,
         conv_pos_style: str = "d2v2",                     # NEW: "d2v2" | "wav2vec2"
         conv_pos_width: int = 95,                         # NEW: total kernel budget (d2v2 default 95; wav2vec2 kernel 128)
         conv_pos_depth: int = 5,                          # NEW: d2v2 stack depth (ignored for wav2vec2)
@@ -220,13 +221,14 @@ class JEPA(pl.LightningModule):
         self.n_encoder_heads = transformer_encoder_layers_cfg["nhead"]
         self.encoder_embedding_dim = transformer_encoder_layers_cfg["d_model"]
 
+        print(f"RoPE: {use_rope}")
         self.encoder = TorchtuneEncoder(
                 d_model = self.encoder_embedding_dim,
                 dim_feedforward = self.encoder_embedding_dim * 4,
                 norm_first = False,
                 nhead = self.n_encoder_heads,
                 num_layers = transformer_encoder_cfg["num_layers"],
-                use_rope = True,
+                use_rope = use_rope,        # was: True
                 max_seq_len=8192,
                 attn_dropout = kwargs.get("attn_dropout", 0.0),
                 activation_dropout = kwargs.get("activation_dropout", 0.0),

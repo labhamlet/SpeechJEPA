@@ -1,0 +1,7 @@
+use_conv_pos: true
+
+style: wav2vec2
+width: 128
+depth: 5        # ignored for wav2vec2
+groups: 16
+pre_ln: false   # ignored for wav2vec2

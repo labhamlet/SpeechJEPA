@@ -137,6 +137,7 @@ class ComponentFactory:
                 transformer_decoder_cfg=transformer_decoder_cfg,
                 # --- conv positional embedding ablation -----------------------
                 use_conv_pos=cfg.pos_embedding.use_conv_pos,
+                use_rope=cfg.encoder.get("use_rope", True),      # NEW
                 conv_pos_style=cfg.pos_embedding.style,
                 conv_pos_width=cfg.pos_embedding.width,
                 conv_pos_depth=cfg.pos_embedding.depth,

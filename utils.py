@@ -1,7 +1,7 @@
 def get_identity_from_cfg(cfg):
     identity = "Data={}_Rope={}_EMA={}_EMAEnd={}_EMASteps={}_".format(
         cfg.data.get("name", "Libri"),
-        cfg.trainer.get("use_rope", True),
+        cfg.encoder.get("use_rope", True),      # was: cfg.trainer.get(...)
         cfg.trainer.get("ema_decay"),
         cfg.trainer.get("ema_end_decay"),
         cfg.trainer.get("ema_anneal_end_step"),
