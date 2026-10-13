@@ -39,14 +39,6 @@ greedy CTC decoding (no language model).
 |---|---|---|---|
 | Speech-JEPA base | none (SSL) | `labhamlet/speech-jepa-base` | 370 k updates on LibriSpeech 960 h, 4×H100 |
 
-Word error rates (%) of the fine-tuned models on LibriSpeech, greedy decoding, no LM:
-
-| Labelled data | dev-clean | dev-other | test-clean | test-other |
-|---|---|---|---|---|
-| 10 min | 32.5 | 37.4 | 33.2 | 37.2 |
-| 1 h | 16.0 | 22.3 | 16.4 | 22.6 |
-| 10 h | 8.2 | 14.4 | 8.3 | 14.6 |
-
 
 ## Quick start
 
