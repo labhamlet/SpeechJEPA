@@ -32,8 +32,7 @@ pip install -r requirements_eval.txt
 
 ## Pretrained models
 
-All models take 16 kHz mono audio. ASR models use a character vocabulary and are evaluated with
-greedy CTC decoding (no language model).
+All models take 16 kHz mono audio.
 
 | Model | Labelled data | Hub repo | Notes |
 |---|---|---|---|
