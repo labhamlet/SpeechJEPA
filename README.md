@@ -162,12 +162,12 @@ python finetune_librilight_d2v2.py --config-name libri_10min.yaml   # also libri
 ```
 
 
-| Split | Updates | Peak lr | Batch (samples) | Time / feature mask prob |
+| Split | Updates | Peak lr | Time / feature mask prob |
 |---|---|---|---|---|
-| 10 min | 13 k | 1e-4 | 12.8 M | 0.075 / 0.008 |
-| 1 h | 13 k | 1e-4 | 12.8 M | 0.075 / 0.004 |
-| 10 h | 20 k | 2e-5 | 12.8 M | 0.065 / 0.004 |
-| 100 h | 50 k | 2e-5 | 12.8 M | 0.05 / 0.008 |
+| 10 min | 13 k | 1e-4 | 0.075 / 0.008 |
+| 1 h | 13 k | 1e-4 | 0.075 / 0.004 |
+| 10 h | 20 k | 2e-5  | 0.065 / 0.004 |
+| 100 h | 50 k | 2e-5  | 0.05 / 0.008 |
 
 Other entry points: `finetune_librilight_hf.py` (Hugging Face `datasets` loader),
 `finetune_librilight_superb.py` (SUPERB-style weighted layer sum),
