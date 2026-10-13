@@ -6,7 +6,7 @@ Speech-JEPA learns speech representations by predicting, in latent space, the re
 masked spans of a waveform from the visible context.
 
 The released checkpoints are listed in [Pretrained models](#pretrained-models). ASR fine-tuning on
-the Libri-light limited-resource splits and HEAR benchmark evaluation are included.
+the Libri-light limited-resource splits are included.
 
 ---
 
@@ -30,13 +30,17 @@ pip install -r ASR/req.txt
 pip install -r requirements_eval.txt
 ```
 
+Using the released models only needs `pip install transformers torch`.
+
 ## Pretrained models
 
-All models take 16 kHz mono audio.
+All models take 16 kHz mono audio and are published on the Hugging Face Hub in the same layout as the
+wav2vec 2.0 checkpoints: they load with `transformers` (`AutoModel` / `AutoModelForCTC`,
+`trust_remote_code=True`) and a `Wav2Vec2FeatureExtractor` / `Wav2Vec2Processor`.
 
 | Model | Labelled data | Hub repo | Notes |
 |---|---|---|---|
-| Speech-JEPA base | none (SSL) | `labhamlet/speech-jepa-base` | 370 k updates on LibriSpeech 960 h, 4×H100 |
+| Speech-JEPA base | none (SSL) | [`labhamlet/speech-jepa-base`](https://huggingface.co/labhamlet/speech-jepa-base) | 370 k updates on LibriSpeech 960 h, 4×H100 |
 
 
 ## Quick start
@@ -45,26 +49,48 @@ All models take 16 kHz mono audio.
 
 ```python
 import torch
-from wavjepa.hub import load_pretrained, load_audio
+from transformers import AutoModel, Wav2Vec2FeatureExtractor
 
-model = load_pretrained("labhamlet/speech-jepa-base")     # or a local exported folder
-wav = load_audio("speech.flac")                            # (T,) float32, resampled to 16 kHz
+feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained("labhamlet/speech-jepa-base")
+model = AutoModel.from_pretrained("labhamlet/speech-jepa-base", trust_remote_code=True).eval()
+
+waveform = ...                                              # 1-D float array, 16 kHz
+inputs = feature_extractor(waveform, sampling_rate=16000, return_tensors="pt")
 
 with torch.inference_mode():
-    frames = model.get_audio_representation(wav[None, None, :])   # (1, T // 320, 768)
+    outputs = model(**inputs, output_hidden_states=True)
+
+frames = outputs.last_hidden_state      # (1, T // 320, 768): one vector every 20 ms
+layers = outputs.hidden_states          # 13 × (1, T // 320, 768): input embedding + every layer
 ```
 
-For a padded batch pass `attention_padding_mask` of shape `(B, T // 320)` with `True` on padded
-frames. `load_pretrained` also accepts `layer_drop`, `attn_dropout`, `activation_dropout` and
-`hidden_dropout` for fine-tuning.
+Pass a list of waveforms with `padding=True` for batches; the returned `attention_mask` is used to ignore
+padded samples. A complete walk-through (batching, pooling, timestamps) is in
+[`notebooks/speech_representations.ipynb`](notebooks/speech_representations.ipynb).
+
+The same repository can be loaded back into the training code (decoder and EMA teacher included),
+e.g. to fine-tune or continue pre-training:
+
+```python
+from wavjepa.hub import load_pretrained
+
+model = load_pretrained("labhamlet/speech-jepa-base")          # wavjepa.jepa_d2v2.JEPA
+model = load_pretrained("labhamlet/speech-jepa-base", layer_drop=0.05, attn_dropout=0.1)
+```
 
 ### Transcribe speech with a fine-tuned model
 
 ```python
-from wavjepa.hub import load_asr, load_audio
+import torch
+from transformers import AutoModelForCTC, Wav2Vec2Processor
 
-asr = load_asr("labhamlet/speech-jepa-base-asr-10h", device="cuda")
-print(asr.transcribe(load_audio("speech.flac")[None].cuda()))   # ['HELLO WORLD']
+processor = Wav2Vec2Processor.from_pretrained("labhamlet/speech-jepa-base-asr-10h")
+model = AutoModelForCTC.from_pretrained("labhamlet/speech-jepa-base-asr-10h", trust_remote_code=True).eval()
+
+inputs = processor(waveform, sampling_rate=16000, return_tensors="pt")
+with torch.inference_mode():
+    logits = model(**inputs).logits
+print(processor.batch_decode(logits.argmax(-1)))             # ['HELLO WORLD']
 ```
 
 ```bash
@@ -140,12 +166,26 @@ python finetune_librilight_d2v2.py --config-name libri_10min.yaml   # also libri
 |---|---|---|---|---|
 | 10 min | 13 k | 1e-4 | 12.8 M | 0.075 / 0.008 |
 | 1 h | 13 k | 1e-4 | 12.8 M | 0.075 / 0.004 |
-| 10 h | 20 k | 2e-5 | 3.2 M | 0.065 / 0.004 |
+| 10 h | 20 k | 2e-5 | 12.8 M | 0.065 / 0.004 |
 | 100 h | 50 k | 2e-5 | 12.8 M | 0.05 / 0.008 |
 
 Other entry points: `finetune_librilight_hf.py` (Hugging Face `datasets` loader),
 `finetune_librilight_superb.py` (SUPERB-style weighted layer sum),
 `speech_jepa_for_asr/bayesian_optimization.py` (Ax search over beam-search LM weights).
+
+## Publishing checkpoints
+
+`hub/export_checkpoint.py` converts a Lightning checkpoint into a Hub repository folder (model code,
+weights, processor files and model card) and `hub/publish.py` uploads it:
+
+```bash
+hf auth login
+python hub/export_checkpoint.py --kind pretrained --include-teacher \
+    --ckpt /path/to/step=370000.ckpt --out export/speech-jepa-base --repo-id labhamlet/speech-jepa-base
+python hub/publish.py export/speech-jepa-base:labhamlet/speech-jepa-base
+```
+
+For a CTC model use `--kind asr --split 10h --results <run dir>/results.json`.
 
 
 The code is released under the BSD-3-Clause license (see `LICENSE`); the JEPA training loop builds on
